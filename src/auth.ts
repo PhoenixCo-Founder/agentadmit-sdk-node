@@ -43,57 +43,64 @@ export interface AgentContext {
  */
 export async function validateAgentToken(token: string): Promise<Omit<AgentContext, 'auth_type'>> {
   const config = getConfig();
-  const storage = getStorage();
 
   if (!token.startsWith(config.token_prefix_access)) {
     throw new Error('Not an AgentAdmit access token');
   }
 
-  const raw = token.slice(config.token_prefix_access.length);
-  const publicKey = loadPublicKey(config.public_key_path);
+  // MANDATORY INTROSPECTION — validate via AgentAdmit hosted service
+  // No local JWT decode. Every verification call goes through AgentAdmit.
+  const verifyUrl = (config as any).agentadmit_verify_url || 'https://api.agentadmit.io/v1/verify';
+  const appId = config.app_id;
+  const apiKey = (config as any).api_key || '';
 
-  let payload: any;
+  let response: globalThis.Response;
   try {
-    payload = jwt.verify(raw, publicKey, {
-      algorithms: [config.algorithm as jwt.Algorithm],
-      audience: config.audience,
+    response = await fetch(verifyUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-App-Id': appId,
+        'X-Api-Key': apiKey,
+        'Content-Type': 'application/json',
+      },
     });
   } catch (err: any) {
-    if (err.name === 'TokenExpiredError') {
-      // Try to mark connection as expired
-      try {
-        const decoded = jwt.decode(raw) as any;
-        const connId = decoded?.agentadmit?.connection_id;
-        if (connId) await storage.updateConnection(connId, { status: 'expired' });
-      } catch {}
-      throw new Error('Access token has expired');
-    }
-    throw new Error('Invalid access token');
+    throw new Error(`AgentAdmit introspection failed (network): ${err.message}`);
   }
 
-  const claims = payload.agentadmit || {};
-  const connectionId = claims.connection_id;
-  const scopes = claims.scopes || [];
-  const userId = payload.sub;
-
-  if (!connectionId || !userId) {
-    throw new Error('Token missing required claims');
+  if (response.status === 401) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error_description || 'Token validation failed');
   }
 
-  const connection = await storage.getActiveConnection(connectionId);
-  if (!connection) {
-    throw new Error('Connection revoked or not found');
+  if (response.status !== 200) {
+    throw new Error(`Verification service returned ${response.status}`);
   }
 
-  const user = await storage.getUser(userId, config.user_lookup_field);
-  if (!user) {
-    throw new Error('User not found');
+  const data = await response.json();
+
+  const scopes = data.scopes || [];
+  const userId = data.user_id;
+  const connectionId = data.connection_id;
+
+  if (!userId) {
+    throw new Error('Introspection returned no user');
   }
 
-  // Update last_used
+  // User lookup from app's local database (if storage is configured)
+  let user: Record<string, any> = { [config.user_lookup_field]: userId };
   try {
-    await storage.updateConnection(connectionId, { last_used: new Date() });
+    const storage = getStorage();
+    const localUser = await storage.getUser(userId, config.user_lookup_field);
+    if (localUser) user = localUser;
   } catch {}
+
+  const connection = {
+    connection_id: connectionId,
+    scopes,
+    agent_label: data.agent_label || 'Unknown Agent',
+  };
 
   return { user, connection, scopes };
 }

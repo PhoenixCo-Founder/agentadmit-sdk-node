@@ -39,9 +39,10 @@ export interface StorageConfig {
 export interface AgentAdmitConfig {
   app_name: string;
   app_id: string;
+  api_key: string;
   api_base_url: string;
-  private_key_path: string;
-  public_key_path: string;
+  agentadmit_api_url: string;
+  agentadmit_verify_url: string;
   token_prefix_connection: string;
   token_prefix_access: string;
   algorithm: string;
@@ -60,9 +61,10 @@ export interface AgentAdmitConfig {
 const DEFAULT_CONFIG: Partial<AgentAdmitConfig> = {
   app_name: 'My App',
   app_id: '',
+  api_key: '',
   api_base_url: 'http://localhost:3000',
-  private_key_path: 'keys/agentadmit_private.pem',
-  public_key_path: 'keys/agentadmit_public.pem',
+  agentadmit_api_url: 'https://api.agentadmit.app',
+  agentadmit_verify_url: 'https://api.agentadmit.io/v1/verify',
   token_prefix_connection: 'ag_ct_',
   token_prefix_access: 'ag_at_',
   algorithm: 'RS256',
