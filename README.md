@@ -63,6 +63,16 @@ export default async function handler(req, res) {
 }
 ```
 
+## Important
+
+**Mandatory introspection.** All token validation goes through api.agentadmit.com. There is no self-hosted mode. No local JWT validation. No bypass. This is required for security, audit logging, and scope enforcement.
+
+**In-app AI scopes.** If your app has built-in AI features (analysis, plan generation, photo recognition), do not expose those as agent scopes. The user's AI agent can read the raw data and do the analysis itself. Exposing in-app AI endpoints to agents creates double cost.
+
+## Documentation
+
+Full integration guide: https://docs.agentadmit.com/getting-started
+
 ## License
 
 All rights reserved. Patent pending.

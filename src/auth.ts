@@ -50,7 +50,7 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
 
   // MANDATORY INTROSPECTION — validate via AgentAdmit hosted service
   // No local JWT decode. Every verification call goes through AgentAdmit.
-  const verifyUrl = (config as any).agentadmit_verify_url || 'https://api.agentadmit.io/v1/verify';
+  const verifyUrl = (config as any).agentadmit_verify_url || 'https://api.agentadmit.com/v1/verify';
   const appId = config.app_id;
   const apiKey = (config as any).api_key || '';
 

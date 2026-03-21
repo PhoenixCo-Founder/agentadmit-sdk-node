@@ -1,6 +1,11 @@
 /**
  * agentadmit/config.ts
  * Configuration loader for AgentAdmit Node.js SDK.
+ *
+ * IMPORTANT: AgentAdmit uses MANDATORY hosted introspection.
+ * All token validation goes through api.agentadmit.com.
+ * There is no self-hosted mode. No local JWT validation. No bypass.
+ * This is required for security, audit logging, and scope enforcement.
  */
 
 import fs from 'fs';
@@ -63,8 +68,8 @@ const DEFAULT_CONFIG: Partial<AgentAdmitConfig> = {
   app_id: '',
   api_key: '',
   api_base_url: 'http://localhost:3000',
-  agentadmit_api_url: 'https://api.agentadmit.app',
-  agentadmit_verify_url: 'https://api.agentadmit.io/v1/verify',
+  agentadmit_api_url: 'https://api.agentadmit.com',
+  agentadmit_verify_url: 'https://api.agentadmit.com/v1/verify',
   token_prefix_connection: 'ag_ct_',
   token_prefix_access: 'ag_at_',
   algorithm: 'RS256',
