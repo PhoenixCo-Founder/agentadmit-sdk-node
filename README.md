@@ -63,6 +63,16 @@ export default async function handler(req, res) {
 }
 ```
 
+## How It Works
+
+1. User clicks "AI Agent Access" in your app
+2. Selects scopes and connection duration
+3. Gets a token to give to their AI agent
+4. Agent exchanges the token for scoped API access
+5. User revokes anytime
+
+The token goes to the human, not the agent. No automated delivery = no prompt injection surface.
+
 ## Important
 
 **Mandatory introspection.** All token validation goes through api.agentadmit.com. There is no self-hosted mode. No local JWT validation. No bypass. This is required for security, audit logging, and scope enforcement.
