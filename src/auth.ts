@@ -70,7 +70,7 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
   }
 
   if (response.status === 401) {
-    const errData = await response.json().catch(() => ({}));
+    const errData = (await response.json().catch(() => ({}))) as Record<string, string>;
     throw new Error(errData.error_description || 'Token validation failed');
   }
 
@@ -78,11 +78,11 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
     throw new Error(`Verification service returned ${response.status}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as Record<string, any>;
 
-  const scopes = data.scopes || [];
-  const userId = data.user_id;
-  const connectionId = data.connection_id;
+  const scopes: string[] = data.scopes || [];
+  const userId: string = data.user_id;
+  const connectionId: string = data.connection_id;
 
   if (!userId) {
     throw new Error('Introspection returned no user');

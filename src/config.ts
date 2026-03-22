@@ -61,6 +61,8 @@ export interface AgentAdmitConfig {
   route_prefix: string;
   discovery_path: string;
   user_lookup_field: string;
+  private_key_path: string;
+  public_key_path: string;
 }
 
 const DEFAULT_CONFIG: Partial<AgentAdmitConfig> = {
