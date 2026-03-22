@@ -63,6 +63,39 @@ export default async function handler(req, res) {
 }
 ```
 
+## MCP Server Integration
+
+Building an MCP server in TypeScript/Node? AgentAdmit is the auth layer. MCP servers are app owners. Same SDK, same pricing.
+
+For **STDIO transport** (most MCP servers), the agent includes the token in tool arguments:
+
+```javascript
+const { validateAgentToken } = require('@agentadmit/node');
+
+async function handleToolCall(name, args) {
+  // 1. Extract token from tool arguments
+  const token = args.agentadmit_token;
+  delete args.agentadmit_token;
+  if (!token) throw new Error('agentadmit_token required');
+  
+  // 2. Validate via AgentAdmit hosted service
+  const ctx = await validateAgentToken(token);
+  
+  // 3. Check scope for this tool
+  const required = SCOPE_MAP[name];
+  if (required && !ctx.scopes.includes(required)) {
+    throw new Error(`Missing scope '${required}'`);
+  }
+  
+  // 4. Run the tool
+  return TOOL_HANDLERS[name](args, ctx);
+}
+```
+
+For **HTTP transport** (Express-based MCP servers), use the full SDK middleware. The agent sends the token via `Authorization: Bearer` header, same as any HTTP API.
+
+Full MCP integration guide with complete before/after examples: `docs.agentadmit.com/mcp`
+
 ## How It Works
 
 1. User clicks "AI Agent Access" in your app
