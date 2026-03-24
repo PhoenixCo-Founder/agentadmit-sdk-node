@@ -96,6 +96,8 @@ For **HTTP transport** (Express-based MCP servers), use the full SDK middleware.
 
 Full MCP integration guide with complete before/after examples: `docs.agentadmit.com/mcp`
 
+**MCP operators:** You also get the embeddable admin panel with revoke capability, admin scopes for your own AI agent to monitor your server, and full audit trail for billing. See the Admin Revocation and Embeddable Admin Panel sections below.
+
 ## How It Works
 
 1. User clicks "AI Agent Access" in your app
