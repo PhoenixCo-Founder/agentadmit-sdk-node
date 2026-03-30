@@ -63,6 +63,8 @@ export interface AgentAdmitConfig {
   user_lookup_field: string;
   private_key_path: string;
   public_key_path: string;
+  /** Max retries on 429 before throwing RateLimitError. Default: 3. */
+  max_retries: number;
 }
 
 const DEFAULT_CONFIG: Partial<AgentAdmitConfig> = {
@@ -101,6 +103,7 @@ const DEFAULT_CONFIG: Partial<AgentAdmitConfig> = {
   route_prefix: '/agentadmit',
   discovery_path: '/.well-known/agentadmit',
   user_lookup_field: 'user_id',
+  max_retries: 3,
 };
 
 let _config: AgentAdmitConfig | null = null;

@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { getConfig } from './config';
 import { loadPublicKey } from './keys';
 import { StorageBackend } from './storage';
+import { RateLimitError } from './errors';
 
 let _storage: StorageBackend | null = null;
 let _verifyUserToken: ((token: string) => string | Promise<string>) | null = null;
@@ -38,6 +39,105 @@ export interface AgentContext {
   scopes: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Rate-limit retry helpers
+// ---------------------------------------------------------------------------
+
+/** Parse an integer from an HTTP response header. Returns null if missing or invalid. */
+function parseIntHeader(headers: Headers, name: string): number | null {
+  const val = headers.get(name);
+  if (val === null) return null;
+  const n = parseInt(val, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Parse a float from an HTTP response header. Returns null if missing or invalid. */
+function parseFloatHeader(headers: Headers, name: string): number | null {
+  const val = headers.get(name);
+  if (val === null) return null;
+  const n = parseFloat(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** sleep for `ms` milliseconds */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * POST to the AgentAdmit introspection endpoint with automatic 429 retry.
+ *
+ * Retry policy:
+ *   - Initial delay: 1 second
+ *   - Each retry doubles the delay, capped at 30 seconds
+ *   - Each delay adds 0–500 ms of random jitter
+ *   - Honors Retry-After header if present
+ *   - After maxRetries exhausted, throws RateLimitError
+ */
+async function introspectWithRetry(
+  verifyUrl: string,
+  token: string,
+  appId: string,
+  apiKey: string,
+  maxRetries: number,
+): Promise<globalThis.Response> {
+  let delay = 1000; // ms
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let response: globalThis.Response;
+    try {
+      response = await fetch(verifyUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-App-Id': appId,
+          'X-Api-Key': apiKey,
+          'Content-Type': 'application/json',
+        },
+      });
+    } catch (err: any) {
+      throw new Error(`AgentAdmit introspection failed (network): ${err.message}`);
+    }
+
+    if (response.status !== 429) {
+      return response;
+    }
+
+    // --- 429 handling ---
+    const retryAfter = parseFloatHeader(response.headers, 'Retry-After');
+    const limit = parseIntHeader(response.headers, 'X-RateLimit-Limit');
+    const remaining = parseIntHeader(response.headers, 'X-RateLimit-Remaining');
+    const reset = parseIntHeader(response.headers, 'X-RateLimit-Reset');
+
+    if (attempt >= maxRetries) {
+      throw new RateLimitError({
+        message: `AgentAdmit rate limit exceeded. Max retries (${maxRetries}) exhausted.`,
+        retryAfter,
+        limit,
+        remaining,
+        reset,
+      });
+    }
+
+    const waitMs = retryAfter !== null ? retryAfter * 1000 : Math.min(delay, 30_000);
+    const jitterMs = Math.random() * 500; // 0–500 ms
+    const totalWaitMs = waitMs + jitterMs;
+
+    console.warn(
+      `[AgentAdmit] Rate-limited (attempt ${attempt + 1}/${maxRetries}). ` +
+      `Retrying in ${(totalWaitMs / 1000).toFixed(2)}s.`,
+    );
+
+    await sleep(totalWaitMs);
+    delay = Math.min(delay * 2, 30_000);
+  }
+
+  // Should never be reached
+  throw new Error('Unexpected exit from retry loop');
+}
+
+// ---------------------------------------------------------------------------
+
 /**
  * Validate an ag_at_ token and return the agent context.
  */
@@ -53,21 +153,11 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
   const verifyUrl = (config as any).agentadmit_verify_url || 'https://api.agentadmit.com/v1/verify';
   const appId = config.app_id;
   const apiKey = (config as any).api_key || '';
+  const maxRetries = (config as any).max_retries ?? 3;
 
-  let response: globalThis.Response;
-  try {
-    response = await fetch(verifyUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'X-App-Id': appId,
-        'X-Api-Key': apiKey,
-        'Content-Type': 'application/json',
-      },
-    });
-  } catch (err: any) {
-    throw new Error(`AgentAdmit introspection failed (network): ${err.message}`);
-  }
+  // introspectWithRetry handles 429 with exponential backoff + jitter.
+  // RateLimitError propagates to the caller when retries are exhausted.
+  const response = await introspectWithRetry(verifyUrl, token, appId, apiKey, maxRetries);
 
   if (response.status === 401) {
     const errData = (await response.json().catch(() => ({}))) as Record<string, string>;

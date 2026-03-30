@@ -23,3 +23,5 @@ export {
 export type { AgentContext } from './auth';
 
 export { createAgentAdmitRouter } from './routes';
+
+export { RateLimitError } from './errors';
