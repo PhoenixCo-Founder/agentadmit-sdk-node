@@ -143,7 +143,7 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       const duration = duration_seconds || config.connection_token_ttl;
       const exchangeUrl = `${config.api_base_url.replace(/\/$/, '')}${config.route_prefix}/token`;
       const urlPart = Buffer.from(exchangeUrl).toString('base64url');
-      const secretPart = crypto.randomBytes(24).toString('base64url');
+      const secretPart = crypto.randomBytes(32).toString('base64url'); // 256 bits of cryptographic entropy (industry benchmark)
       const rawToken = `${config.token_prefix_connection}${urlPart}.${secretPart}`;
 
       const now = new Date();
