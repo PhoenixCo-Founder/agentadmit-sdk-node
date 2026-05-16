@@ -1,0 +1,53 @@
+# Publish @agentadmit/sdk to npm with Trusted Publishing + Provenance
+#
+# Trusted Publishing (OIDC) eliminates long-lived npm tokens.
+# Provenance is generated automatically with trusted publishing.
+#
+# Prerequisites (one-time setup on npmjs.com):
+#   1. Create npm org: @agentadmit
+#   2. Create package: @agentadmit/sdk
+#   3. Configure trusted publisher:
+#      - Organization: PhoenixCo-Founder
+#      - Repository: agentadmit-sdk-node
+#      - Workflow: publish.yml
+#   4. Restrict token access: "Require 2FA and disallow tokens"
+#
+# Trigger: push a version tag (e.g., git tag v0.1.0 && git push --tags)
+
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Install npm 11+ for trusted publishing support
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Publish with trusted publishing
+        run: npm publish --access public
