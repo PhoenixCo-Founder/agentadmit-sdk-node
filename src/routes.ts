@@ -8,6 +8,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { randomBytes } from 'crypto';
 import { getConfig, getScopeMetadata, getDurationOptions } from './config';
 import { StorageBackend } from './storage';
 import { checkConnectionCap } from './auth';
@@ -134,8 +135,10 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       }
 
       // Store local record
+      // Use hosted service's connection_id if provided; generate a local fallback
+      // to prevent duplicate-key errors when hosting service omits it.
       await storage.storeConnection({
-        connection_id: data.connection_id || 'unknown',
+        connection_id: data.connection_id || `conn_${randomBytes(16).toString('base64url')}`,
         user_id: String(userId),
         scopes,
         role,
