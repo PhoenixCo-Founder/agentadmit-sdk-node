@@ -89,11 +89,10 @@ async function introspectWithRetry(
       response = await fetch(verifyUrl, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
-          'X-App-Id': appId,
-          'X-Api-Key': apiKey,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ token }),
       });
     } catch (err: any) {
       throw new Error(`AgentAdmit introspection failed (network): ${err.message}`);
