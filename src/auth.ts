@@ -169,6 +169,14 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
 
   const data = (await response.json()) as Record<string, any>;
 
+  // Check active flag (RFC 7662 introspection pattern).
+  // The verify endpoint returns {active: false} with HTTP 200 for invalid/
+  // expired/revoked tokens. Without this check, we'd read empty scopes.
+  if (!data.active) {
+    const reason = data.error || 'invalid_token';
+    throw new Error(`Token is not active: ${reason}`);
+  }
+
   const scopes: string[] = data.scopes || [];
   const userId: string = data.user_id;
   const connectionId: string = data.connection_id;
