@@ -25,3 +25,19 @@ export type { AgentContext } from './auth';
 export { createAgentAdmitRouter } from './routes';
 
 export { RateLimitError } from './errors';
+
+export {
+  configureAlerts,
+  listAlerts,
+  getAlertConfig,
+  ALERT_TYPES,
+} from './alerts';
+export type {
+  AlertType,
+  ConfigureAlertsOptions,
+  ListAlertsOptions,
+  GetAlertConfigOptions,
+  AlertEvent,
+  AlertEventsResponse,
+  AlertConfigResponse,
+} from './alerts';
