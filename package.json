@@ -1,12 +1,9 @@
 {
   "name": "@agentadmit/sdk",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "AgentAdmit SDK \u2014 User-mediated AI agent authorization for Node.js apps",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "agentadmit": "dist/cli.js"
-  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

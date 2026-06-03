@@ -136,6 +136,13 @@ async function validateAgentToken(token) {
         throw new Error(`Verification service returned ${response.status}`);
     }
     const data = (await response.json());
+    // Check active flag (RFC 7662 introspection pattern).
+    // The verify endpoint returns {active: false} with HTTP 200 for invalid/
+    // expired/revoked tokens. Without this check, we'd read empty scopes.
+    if (!data.active) {
+        const reason = data.error || 'invalid_token';
+        throw new Error(`Token is not active: ${reason}`);
+    }
     const scopes = data.scopes || [];
     const userId = data.user_id;
     const connectionId = data.connection_id;

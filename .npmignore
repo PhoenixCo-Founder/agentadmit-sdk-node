@@ -1,0 +1,7 @@
+.github/
+.git/
+src/
+tsconfig.json
+.npmrc
+node_modules/
+*.tgz
