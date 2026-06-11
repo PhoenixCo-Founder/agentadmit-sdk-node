@@ -12,7 +12,8 @@
 #      - Workflow: publish.yml
 #   4. Restrict token access: "Require 2FA and disallow tokens"
 #
-# Trigger: push a version tag (e.g., git tag v0.1.0 && git push --tags)
+# Trigger: push a version tag (e.g., git tag v1.0.0 && git push --tags)
+# Action versions are pinned to exact SHAs per supply chain policy.
 
 name: Publish to npm
 
@@ -29,12 +30,20 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Check tag matches package version
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+            exit 1
+          fi
 
       # Install npm 11+ for trusted publishing support
       - name: Upgrade npm for trusted publishing
