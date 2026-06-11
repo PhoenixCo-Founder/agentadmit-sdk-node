@@ -42,15 +42,15 @@ export declare function validateAgentToken(token: string): Promise<Omit<AgentCon
 /**
  * Express middleware: require a specific scope (agent-only).
  */
-export declare function requireScope(scope: string): (req: Request, res: Response, next: NextFunction) => Promise<Response<any, Record<string, any>> | undefined>;
+export declare function requireScope(scope: string): (req: Request, res: Response, next: NextFunction) => Promise<Response | undefined>;
 /**
  * Express middleware: enforce scope only if caller is an agent.
  */
-export declare function requireScopeIfAgent(scope: string): (req: Request, res: Response, next: NextFunction) => Promise<void | Response<any, Record<string, any>>>;
+export declare function requireScopeIfAgent(scope: string): (req: Request, res: Response, next: NextFunction) => Promise<void | Response>;
 /**
  * Express middleware: resolve user or agent from token.
  */
-export declare function resolveAuth(): (req: Request, res: Response, next: NextFunction) => Promise<void | Response<any, Record<string, any>>>;
+export declare function resolveAuth(): (req: Request, res: Response, next: NextFunction) => Promise<void | Response>;
 /**
  * Check connection cap for tier enforcement.
  */
