@@ -1,7 +1,7 @@
 {
   "name": "@agentadmit/sdk",
-  "version": "1.0.0",
-  "description": "AgentAdmit SDK \u2014 User-mediated AI agent authorization for Node.js apps",
+  "version": "1.1.0",
+  "description": "AgentAdmit SDK — User-mediated AI agent authorization for Node.js apps",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -37,7 +37,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "roots": ["<rootDir>/tests"]
+    "roots": [
+      "<rootDir>/tests"
+    ]
   },
   "license": "SEE LICENSE IN LICENSE",
   "author": "Christopher Emerson",
