@@ -39,6 +39,41 @@ export interface AgentContext {
   scopes: string[];
 }
 
+/**
+ * Error codes the hosted /api/v1/verify endpoint returns with HTTP 200 and
+ * `active: false`. Unknown codes pass through as plain strings.
+ */
+export const VERIFY_ERROR_CODES = [
+  'invalid_token',
+  'token_expired',
+  'token_revoked',
+  'connection_revoked',
+  'connection_expired',
+  'environment_mismatch',
+  'insufficient_scope',
+] as const;
+
+export type VerifyErrorCode = (typeof VERIFY_ERROR_CODES)[number];
+
+/** Successful introspection result from /api/v1/verify. */
+export interface VerifyActive {
+  active: true;
+  sub?: string;
+  user_id?: string;
+  connection_id?: string;
+  scopes?: string[];
+  role?: string;
+  app_id?: string;
+  jti?: string;
+  exp?: number;
+}
+
+/** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
+export interface VerifyInactive {
+  active: false;
+  error?: VerifyErrorCode | (string & {});
+}
+
 // ---------------------------------------------------------------------------
 // Rate-limit retry helpers
 // ---------------------------------------------------------------------------
@@ -149,7 +184,7 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
 
   // MANDATORY INTROSPECTION — validate via AgentAdmit hosted service
   // No local JWT decode. Every verification call goes through AgentAdmit.
-  const verifyUrl = (config as any).agentadmit_verify_url || 'https://api.agentadmit.com/v1/verify';
+  const verifyUrl = (config as any).agentadmit_verify_url || 'https://api.agentadmit.com/api/v1/verify';
   const appId = config.app_id;
   const apiKey = (config as any).api_key || '';
   const maxRetries = (config as any).max_retries ?? 3;
@@ -167,11 +202,14 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
     throw new Error(`Verification service returned ${response.status}`);
   }
 
+  // Shape: VerifyActive | VerifyInactive (kept loose for forward-compat).
   const data = (await response.json()) as Record<string, any>;
 
   // Check active flag (RFC 7662 introspection pattern).
   // The verify endpoint returns {active: false} with HTTP 200 for invalid/
-  // expired/revoked tokens. Without this check, we'd read empty scopes.
+  // expired/revoked tokens (error is one of VERIFY_ERROR_CODES, e.g.
+  // token_expired, connection_expired, environment_mismatch). Without this
+  // check, we'd read empty scopes.
   if (!data.active) {
     const reason = data.error || 'invalid_token';
     throw new Error(`Token is not active: ${reason}`);

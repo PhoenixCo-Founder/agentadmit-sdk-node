@@ -1,6 +1,10 @@
 /**
  * agentadmit/routes.ts
  * Express router with all AgentAdmit endpoints.
+ *
+ * ALL token operations go through the AgentAdmit hosted service. The SDK does
+ * NOT sign JWTs, generate RSA keys, or serve JWKS endpoints. The hosted service
+ * owns all cryptographic operations.
  */
 import { Router, Request } from 'express';
 import { StorageBackend } from './storage';

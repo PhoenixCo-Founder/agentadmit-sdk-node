@@ -34,6 +34,11 @@
       "optional": true
     }
   },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": ["<rootDir>/tests"]
+  },
   "license": "SEE LICENSE IN LICENSE",
   "author": "Christopher Emerson",
   "repository": {

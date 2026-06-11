@@ -25,22 +25,29 @@ interface RouterOptions {
 }
 
 /**
- * Make an authenticated request to the AgentAdmit hosted service.
+ * Make a request to the AgentAdmit hosted service. Authenticated with the
+ * operator API key, except for /exchange (authenticated: false) where the
+ * connection token itself is the credential.
  */
 async function callHostedService(
   path: string,
   body: Record<string, any>,
+  options: { authenticated?: boolean } = {},
 ): Promise<{ status: number; data: any }> {
   const config = getConfig();
   const url = `${config.agentadmit_api_url.replace(/\/$/, '')}${path}`;
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-App-Id': config.app_id,
+  };
+  if (options.authenticated !== false) {
+    headers['Authorization'] = `Bearer ${config.api_key}`;
+  }
+
   const resp = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${config.api_key}`,
-      'Content-Type': 'application/json',
-      'X-App-Id': config.app_id,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -112,22 +119,24 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         return res.status(400).json({ error: 'invalid_scope', invalid_scopes: validation.invalid });
       }
 
-      const duration = duration_seconds || config.connection_token_ttl;
       const userId = currentUser[config.user_lookup_field];
       const role = determineRole(currentUser);
       const userTier = getUserTier(currentUser);
 
       await checkConnectionCap(userId, userTier);
 
-      // Call AgentAdmit hosted service
-      const { status, data } = await callHostedService(`/api/v1/apps/${config.app_id}/token`, {
+      // Call AgentAdmit hosted service. duration_seconds is tri-state:
+      // key absent → hosted default (30 days); explicit null → until
+      // revoked; integer 60–31536000 → explicit duration.
+      const issueBody: Record<string, any> = {
         user_id: String(userId),
         scopes,
-        duration_hours: Math.max(1, Math.floor(duration / 3600)),
-        label: label ?? null,
-        user_role: role,
-        metadata: { subscription_tier: userTier, app_name: config.app_name },
-      });
+        role,
+      };
+      if ('duration_seconds' in req.body) {
+        issueBody.duration_seconds = duration_seconds ?? null;
+      }
+      const { status, data } = await callHostedService(`/api/v1/apps/${config.app_id}/token`, issueBody);
 
       if (status !== 200 && status !== 201) {
         console.error('[AgentAdmit] Hosted token generation failed:', status, data);
@@ -143,13 +152,13 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         scopes,
         role,
         agent_label: label,
-        duration_seconds: duration,
+        duration_seconds: 'duration_seconds' in req.body ? duration_seconds ?? null : null,
         status: 'active',
       });
 
       res.json({
-        connection_token: data.token || data.connection_token,
-        expires_in: duration,
+        connection_token: data.token,
+        expires_in: data.expires_in ?? config.connection_token_ttl,
         scopes,
       });
     } catch (err: any) {
@@ -170,13 +179,14 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         return res.status(400).json({ error: 'invalid_request', error_description: 'connection_token required' });
       }
 
-      // Forward to AgentAdmit hosted service
+      // Forward to AgentAdmit hosted service. No API key on this call —
+      // the connection token is the credential.
       const { status, data } = await callHostedService('/api/v1/exchange', {
         token: connection_token,
         agent_label: agent_label ?? null,
         agent_id: agent_id ?? null,
         agent_metadata: agent_metadata ?? null,
-      });
+      }, { authenticated: false });
 
       if (status !== 200) {
         return res.status(status < 500 ? status : 502).json(data);

@@ -25,7 +25,7 @@ const DEFAULT_CONFIG = {
     api_key: '',
     api_base_url: 'http://localhost:3000',
     agentadmit_api_url: 'https://api.agentadmit.com',
-    agentadmit_verify_url: 'https://api.agentadmit.com/v1/verify',
+    agentadmit_verify_url: 'https://api.agentadmit.com/api/v1/verify',
     token_prefix_connection: 'ag_ct_',
     token_prefix_access: 'ag_at_',
     algorithm: 'RS256',
@@ -71,6 +71,10 @@ function loadConfig(configPath = 'agentadmit.yaml') {
     }
     const raw = js_yaml_1.default.load(fs_1.default.readFileSync(resolvedPath, 'utf-8')) || {};
     _config = { ...DEFAULT_CONFIG, ...raw };
+    // Validate the key prefix without ever echoing the key itself.
+    if (_config.api_key && !/^aa_(test|live)_/.test(_config.api_key)) {
+        throw new Error("Invalid api_key: must start with 'aa_test_' or 'aa_live_'");
+    }
     console.log(`[AgentAdmit] Config loaded: ${resolvedPath} (${_config.scopes.length} scopes)`);
     return _config;
 }

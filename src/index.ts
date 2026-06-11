@@ -19,8 +19,18 @@ export {
   checkConnectionCap,
   setStorage,
   setUserVerifier,
+  VERIFY_ERROR_CODES,
 } from './auth';
-export type { AgentContext } from './auth';
+export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive } from './auth';
+
+export {
+  verifyWebhookSignature,
+  isValidWebhookSignature,
+  WebhookSignatureError,
+  SIGNATURE_HEADER,
+  DEFAULT_TOLERANCE_SECONDS,
+} from './webhooks';
+export type { VerifyWebhookSignatureOptions } from './webhooks';
 
 export { createAgentAdmitRouter } from './routes';
 

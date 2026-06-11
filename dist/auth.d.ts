@@ -13,6 +13,29 @@ export interface AgentContext {
     scopes: string[];
 }
 /**
+ * Error codes the hosted /api/v1/verify endpoint returns with HTTP 200 and
+ * `active: false`. Unknown codes pass through as plain strings.
+ */
+export declare const VERIFY_ERROR_CODES: readonly ["invalid_token", "token_expired", "token_revoked", "connection_revoked", "connection_expired", "environment_mismatch", "insufficient_scope"];
+export type VerifyErrorCode = (typeof VERIFY_ERROR_CODES)[number];
+/** Successful introspection result from /api/v1/verify. */
+export interface VerifyActive {
+    active: true;
+    sub?: string;
+    user_id?: string;
+    connection_id?: string;
+    scopes?: string[];
+    role?: string;
+    app_id?: string;
+    jti?: string;
+    exp?: number;
+}
+/** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
+export interface VerifyInactive {
+    active: false;
+    error?: VerifyErrorCode | (string & {});
+}
+/**
  * Validate an ag_at_ token and return the agent context.
  */
 export declare function validateAgentToken(token: string): Promise<Omit<AgentContext, 'auth_type'>>;
