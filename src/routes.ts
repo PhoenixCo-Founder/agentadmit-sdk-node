@@ -13,7 +13,15 @@ import { getConfig, getScopeMetadata, getDurationOptions } from './config';
 import { StorageBackend } from './storage';
 import { checkConnectionCap } from './auth';
 
-const AGENTADMIT_VERSION = '0.1';
+// Version from the package manifest — bumping package.json is the whole
+// release step. Works from src/ (dev) and dist/ (published) alike.
+let AGENTADMIT_VERSION = '0.0.0';
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  AGENTADMIT_VERSION = require('../package.json').version;
+} catch {
+  /* keep fallback */
+}
 
 interface RouterOptions {
   storage: StorageBackend;
@@ -181,12 +189,15 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
 
       // Forward to AgentAdmit hosted service. No API key on this call —
       // the connection token is the credential.
-      const { status, data } = await callHostedService('/api/v1/exchange', {
-        token: connection_token,
-        agent_label: agent_label ?? null,
-        agent_id: agent_id ?? null,
-        agent_metadata: agent_metadata ?? null,
-      }, { authenticated: false });
+      // Optional fields must be OMITTED when absent: the hosted /api/v1/exchange
+      // rejects explicit JSON nulls ("Expected string, received null").
+      const exchangeBody: Record<string, any> = { token: connection_token };
+      if (agent_label != null) exchangeBody.agent_label = agent_label;
+      if (agent_id != null) exchangeBody.agent_id = agent_id;
+      if (agent_metadata != null) exchangeBody.agent_metadata = agent_metadata;
+
+      const { status, data } = await callHostedService('/api/v1/exchange', exchangeBody,
+        { authenticated: false });
 
       if (status !== 200) {
         return res.status(status < 500 ? status : 502).json(data);
