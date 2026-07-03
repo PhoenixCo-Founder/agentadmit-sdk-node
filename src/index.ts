@@ -4,7 +4,7 @@
  * User-mediated AI agent authorization. Plug-and-play for Express and Next.js.
  */
 
-export { loadConfig, getConfig, getScopeMetadata, getDurationOptions, getTierLimits } from './config';
+export { loadConfig, getConfig, getScopeMetadata, getDurationOptions, getTierLimits, validateUrlScheme } from './config';
 export type { AgentAdmitConfig, ScopeDefinition, DurationOption, TierDefinition, StorageConfig } from './config';
 
 export { generateKeyPair, loadPrivateKey, loadPublicKey } from './keys';

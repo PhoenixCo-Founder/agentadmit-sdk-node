@@ -108,6 +108,39 @@ const DEFAULT_CONFIG: Partial<AgentAdmitConfig> = {
 
 let _config: AgentAdmitConfig | null = null;
 
+/**
+ * Localhost hostnames that are permitted to use http:// (local dev/testing only).
+ */
+const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Validate that a URL uses https://, with an exception for http:// when the
+ * host is a localhost address (for local development and testing).
+ *
+ * Throws a configuration error with a clear message on violation.
+ */
+export function validateUrlScheme(url: string, fieldName: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Configuration error: ${fieldName} is not a valid URL: ${url}`);
+  }
+
+  if (parsed.protocol === 'https:') {
+    return; // always allowed
+  }
+
+  if (parsed.protocol === 'http:' && LOCALHOST_HOSTS.has(parsed.hostname)) {
+    return; // http:// localhost exception for local dev
+  }
+
+  throw new Error(
+    `Configuration error: ${fieldName} must use https:// (got ${parsed.protocol}//${parsed.host}). ` +
+    `http:// is only permitted for localhost, 127.0.0.1, or [::1].`,
+  );
+}
+
 export function loadConfig(configPath: string = 'agentadmit.yaml'): AgentAdmitConfig {
   let resolvedPath = configPath;
 
@@ -117,7 +150,7 @@ export function loadConfig(configPath: string = 'agentadmit.yaml'): AgentAdmitCo
       resolvedPath = envPath;
     } else {
       throw new Error(
-        `Config file not found: ${configPath}. Run 'agentadmit init' to generate one.`
+        `Config file not found: ${configPath}. Create an agentadmit.yaml with your app_id, api_key, and scopes.`
       );
     }
   }
@@ -129,6 +162,10 @@ export function loadConfig(configPath: string = 'agentadmit.yaml'): AgentAdmitCo
   if (_config.api_key && !/^aa_(test|live)_/.test(_config.api_key)) {
     throw new Error("Invalid api_key: must start with 'aa_test_' or 'aa_live_'");
   }
+
+  // Enforce https:// on all remote URLs (localhost http:// is allowed for dev).
+  validateUrlScheme(_config.agentadmit_api_url, 'agentadmit_api_url');
+  validateUrlScheme(_config.agentadmit_verify_url, 'agentadmit_verify_url');
 
   console.log(`[AgentAdmit] Config loaded: ${resolvedPath} (${_config.scopes.length} scopes)`);
   return _config;

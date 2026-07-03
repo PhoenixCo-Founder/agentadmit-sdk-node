@@ -213,29 +213,55 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
   // RateLimitError propagates to the caller when retries are exhausted.
   const response = await introspectWithRetry(verifyUrl, token, appId, apiKey, maxRetries);
 
-  if (response.status === 401) {
-    const errData = (await response.json().catch(() => ({}))) as Record<string, string>;
-    throw new Error(errData.error_description || 'Token validation failed');
-  }
-
-  if (response.status !== 200) {
+  // Non-2xx response: treat token as invalid regardless of body content.
+  // 401 gets a more descriptive message if the body cooperates.
+  if (!response.ok) {
+    if (response.status === 401) {
+      const errData = (await response.json().catch(() => ({}))) as Record<string, string>;
+      throw new Error(errData.error_description || 'Token validation failed');
+    }
     throw new Error(`Verification service returned ${response.status}`);
   }
 
-  // Shape: VerifyActive | VerifyInactive (kept loose for forward-compat).
-  const data = (await response.json()) as Record<string, any>;
+  // Parse the response body; a parse failure is treated as invalid.
+  let data: Record<string, any>;
+  try {
+    data = (await response.json()) as Record<string, any>;
+  } catch {
+    throw new Error('Token is not active: invalid_token');
+  }
 
   // Check active flag (RFC 7662 introspection pattern).
-  // The verify endpoint returns {active: false} with HTTP 200 for invalid/
-  // expired/revoked tokens (error is one of VERIFY_ERROR_CODES, e.g.
-  // token_expired, connection_expired, environment_mismatch). Without this
-  // check, we'd read empty scopes.
-  if (!data.active) {
-    const reason = data.error || 'invalid_token';
+  // `active` must be strictly boolean true — coercion (e.g. string "true",
+  // truthy object) is rejected to prevent bypass via type confusion.
+  if (data.active !== true) {
+    const reason = (typeof data.error === 'string' ? data.error : null) || 'invalid_token';
     throw new Error(`Token is not active: ${reason}`);
   }
 
-  const scopes: string[] = data.scopes || [];
+  // Validate identity fields — wrong types are treated as invalid rather than
+  // thrown raw, to avoid leaking internal state through unhandled errors.
+  const scopesRaw = data.scopes;
+  if (
+    scopesRaw !== undefined &&
+    (
+      !Array.isArray(scopesRaw) ||
+      scopesRaw.some((s: unknown) => typeof s !== 'string')
+    )
+  ) {
+    throw new Error('Token is not active: invalid_token');
+  }
+
+  const scopes: string[] = Array.isArray(scopesRaw) ? scopesRaw : [];
+
+  // Optional string identity fields: if present they must be strings.
+  const stringFields = ['user_id', 'agent_id', 'connection_id', 'sub', 'role', 'app_id', 'jti'] as const;
+  for (const field of stringFields) {
+    if (data[field] !== undefined && typeof data[field] !== 'string') {
+      throw new Error('Token is not active: invalid_token');
+    }
+  }
+
   const userId: string = data.user_id;
   const connectionId: string = data.connection_id;
 
