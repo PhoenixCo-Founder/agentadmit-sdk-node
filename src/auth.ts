@@ -99,6 +99,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Hard cap on any single retry wait — including a server-supplied Retry-After. */
+const MAX_RETRY_WAIT_MS = 30_000;
+/** Hard cap on cumulative wait across all retries of a single verify call. */
+const MAX_RETRY_BUDGET_MS = 120_000;
+
 /**
  * POST to the AgentAdmit introspection endpoint with automatic 429 retry.
  *
@@ -106,8 +111,10 @@ function sleep(ms: number): Promise<void> {
  *   - Initial delay: 1 second
  *   - Each retry doubles the delay, capped at 30 seconds
  *   - Each delay adds 0–500 ms of random jitter
- *   - Honors Retry-After header if present
- *   - After maxRetries exhausted, throws RateLimitError
+ *   - Honors Retry-After header if present, capped at 30 seconds
+ *     (Retry-After is untrusted server input and must not pin the caller)
+ *   - Cumulative wait across retries is capped at 120 seconds
+ *   - After maxRetries or the wait budget is exhausted, throws RateLimitError
  */
 async function introspectWithRetry(
   verifyUrl: string,
@@ -117,6 +124,7 @@ async function introspectWithRetry(
   maxRetries: number,
 ): Promise<globalThis.Response> {
   let delay = 1000; // ms
+  let waitedMs = 0; // cumulative wait across retries
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response: globalThis.Response;
@@ -153,9 +161,21 @@ async function introspectWithRetry(
       });
     }
 
-    const waitMs = retryAfter !== null ? retryAfter * 1000 : Math.min(delay, 30_000);
+    const requestedMs = retryAfter !== null ? retryAfter * 1000 : delay;
+    const waitMs = Math.min(Math.max(0, requestedMs), MAX_RETRY_WAIT_MS);
     const jitterMs = Math.random() * 500; // 0–500 ms
     const totalWaitMs = waitMs + jitterMs;
+
+    if (waitedMs + totalWaitMs > MAX_RETRY_BUDGET_MS) {
+      throw new RateLimitError({
+        message: `AgentAdmit rate limit retry budget (${MAX_RETRY_BUDGET_MS / 1000}s) exhausted.`,
+        retryAfter,
+        limit,
+        remaining,
+        reset,
+      });
+    }
+    waitedMs += totalWaitMs;
 
     console.warn(
       `[AgentAdmit] Rate-limited (attempt ${attempt + 1}/${maxRetries}). ` +
@@ -193,29 +213,55 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
   // RateLimitError propagates to the caller when retries are exhausted.
   const response = await introspectWithRetry(verifyUrl, token, appId, apiKey, maxRetries);
 
-  if (response.status === 401) {
-    const errData = (await response.json().catch(() => ({}))) as Record<string, string>;
-    throw new Error(errData.error_description || 'Token validation failed');
-  }
-
-  if (response.status !== 200) {
+  // Non-2xx response: treat token as invalid regardless of body content.
+  // 401 gets a more descriptive message if the body cooperates.
+  if (!response.ok) {
+    if (response.status === 401) {
+      const errData = (await response.json().catch(() => ({}))) as Record<string, string>;
+      throw new Error(errData.error_description || 'Token validation failed');
+    }
     throw new Error(`Verification service returned ${response.status}`);
   }
 
-  // Shape: VerifyActive | VerifyInactive (kept loose for forward-compat).
-  const data = (await response.json()) as Record<string, any>;
+  // Parse the response body; a parse failure is treated as invalid.
+  let data: Record<string, any>;
+  try {
+    data = (await response.json()) as Record<string, any>;
+  } catch {
+    throw new Error('Token is not active: invalid_token');
+  }
 
   // Check active flag (RFC 7662 introspection pattern).
-  // The verify endpoint returns {active: false} with HTTP 200 for invalid/
-  // expired/revoked tokens (error is one of VERIFY_ERROR_CODES, e.g.
-  // token_expired, connection_expired, environment_mismatch). Without this
-  // check, we'd read empty scopes.
-  if (!data.active) {
-    const reason = data.error || 'invalid_token';
+  // `active` must be strictly boolean true — coercion (e.g. string "true",
+  // truthy object) is rejected to prevent bypass via type confusion.
+  if (data.active !== true) {
+    const reason = (typeof data.error === 'string' ? data.error : null) || 'invalid_token';
     throw new Error(`Token is not active: ${reason}`);
   }
 
-  const scopes: string[] = data.scopes || [];
+  // Validate identity fields — wrong types are treated as invalid rather than
+  // thrown raw, to avoid leaking internal state through unhandled errors.
+  const scopesRaw = data.scopes;
+  if (
+    scopesRaw !== undefined &&
+    (
+      !Array.isArray(scopesRaw) ||
+      scopesRaw.some((s: unknown) => typeof s !== 'string')
+    )
+  ) {
+    throw new Error('Token is not active: invalid_token');
+  }
+
+  const scopes: string[] = Array.isArray(scopesRaw) ? scopesRaw : [];
+
+  // Optional string identity fields: if present they must be strings.
+  const stringFields = ['user_id', 'agent_id', 'connection_id', 'sub', 'role', 'app_id', 'jti'] as const;
+  for (const field of stringFields) {
+    if (data[field] !== undefined && typeof data[field] !== 'string') {
+      throw new Error('Token is not active: invalid_token');
+    }
+  }
+
   const userId: string = data.user_id;
   const connectionId: string = data.connection_id;
 

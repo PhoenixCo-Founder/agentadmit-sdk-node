@@ -7,7 +7,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "jest"
+    "test": "jest",
+    "smoke": "node -e \"const sdk = require('./dist/index.js'); if (typeof sdk.createAgentAdmitRouter !== 'function' || typeof sdk.validateAgentToken !== 'function') throw new Error('built entry is missing exports');\"",
+    "prepack": "npm run build && npm run smoke"
   },
   "dependencies": {
     "js-yaml": "4.1.0",

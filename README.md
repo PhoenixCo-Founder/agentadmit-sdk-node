@@ -1,4 +1,4 @@
-# @agentadmit/sdk — Node.js
+# @agentadmit/sdk - Node.js
 
 User-mediated AI agent authorization. Plug-and-play for Express and Next.js.
 
@@ -9,10 +9,9 @@ User-mediated AI agent authorization. Plug-and-play for Express and Next.js.
 
 ```bash
 npm install @agentadmit/sdk
-npx agentadmit init
 ```
 
-Edit `agentadmit.yaml` to define your scopes, then add to your Express app:
+Create an `agentadmit.yaml` file to define your scopes (see Configuration below), then add to your Express app:
 
 ```javascript
 const express = require('express');
@@ -37,7 +36,7 @@ app.use('/agentadmit', agentadmitRouter);
 // Protect your routes with scope enforcement
 app.get('/api/orders', requireScopeIfAgent('read:orders'), (req, res) => {
   const user = req.agentAdmit?.user;
-  // Your existing logic — unchanged
+  // Your existing logic - unchanged
   res.json({ orders: getOrdersForUser(user.user_id) });
 });
 ```
@@ -99,7 +98,7 @@ For **HTTP transport** (Express-based MCP servers), use the full SDK middleware.
 
 Full MCP integration guide with complete before/after examples: `agentadmit.com/docs/mcp-guide`
 
-**MCP operators:** You also get the embeddable admin panel with revoke capability, admin scopes for your own AI agent to monitor your server, and full audit trail for billing. See the Admin Revocation and Embeddable Admin Panel sections below.
+**MCP operators:** You also get the embeddable admin panel for monitoring connections and usage, full audit trail for billing, and user-initiated revocation. See the Embeddable Admin Panel section below.
 
 ## How It Works
 
@@ -115,7 +114,7 @@ The token goes to the human, not the agent. No automated delivery = no prompt in
 
 **Mandatory introspection.** All token validation goes through api.agentadmit.com. There is no self-hosted mode. No local JWT validation. No bypass. This is required for security, audit logging, and scope enforcement.
 
-**Admin revocation.** As the app operator, you can revoke any user's agent connection via `DELETE /agentadmit/admin/connections/{connection_id}` (requires admin role or `manage:connections` scope). Your own AI agent can also revoke connections if given this scope.
+**User revocation.** Users revoke connections via `DELETE /agentadmit/connections/{connection_id}`. The SDK route verifies the requesting user owns the connection before forwarding the revocation to the hosted service; local storage is updated only after the hosted revoke succeeds.
 
 **Embeddable admin panel.** Drop the `<AgentAdmitAdminPanel>` React component into your admin section to view all agent connections, usage metrics, billing status, and revoke any connection without leaving your app. See the React SDK for details.
 
@@ -123,7 +122,7 @@ The token goes to the human, not the agent. No automated delivery = no prompt in
 
 ## Rate Limiting
 
-The AgentAdmit introspection endpoint enforces rate limits. The Node.js SDK handles HTTP 429 responses **automatically** with exponential backoff and jitter — no changes needed in your middleware code.
+The AgentAdmit introspection endpoint enforces rate limits. The Node.js SDK handles HTTP 429 responses **automatically** with exponential backoff and jitter - no changes needed in your middleware code.
 
 ### Retry behavior
 
@@ -135,7 +134,7 @@ The AgentAdmit introspection endpoint enforces rate limits. The Node.js SDK hand
 | Jitter | 0–500 ms | Random addition to each delay |
 | Max retries | **3** | Configurable |
 
-The SDK also respects the `Retry-After` response header — if present, it overrides the computed backoff delay.
+The SDK also respects the `Retry-After` response header - if present, it overrides the computed backoff delay.
 
 ### Configuring max retries
 
@@ -168,10 +167,10 @@ app.use((err: any, req, res, next) => {
 ```
 
 `RateLimitError` properties:
-- `retryAfter` — seconds from `Retry-After` header (or `null`)
-- `limit` — `X-RateLimit-Limit` header value (or `null`)
-- `remaining` — `X-RateLimit-Remaining` header value (or `null`)
-- `reset` — `X-RateLimit-Reset` Unix timestamp (or `null`)
+- `retryAfter` - seconds from `Retry-After` header (or `null`)
+- `limit` - `X-RateLimit-Limit` header value (or `null`)
+- `remaining` - `X-RateLimit-Remaining` header value (or `null`)
+- `reset` - `X-RateLimit-Reset` Unix timestamp (or `null`)
 
 ## Documentation
 
@@ -183,14 +182,14 @@ Full integration guide: https://agentadmit.com/docs/app-owner-guide
 The AgentAdmit Node.js SDK runs server-side and does not interact with app stores or end-user devices directly.
 
 ### What the SDK does
-- Validates AgentAdmit tokens by calling AgentAdmit's hosted introspection endpoint (`https://api.agentadmit.com/api/v1/verify`) on every agent request — this is mandatory introspection; there is no local or offline validation mode
+- Validates AgentAdmit tokens by calling AgentAdmit's hosted introspection endpoint (`https://api.agentadmit.com/api/v1/verify`) on every agent request - this is mandatory introspection; there is no local or offline validation mode
 - Enforces scope-based access control on your API routes
 - Manages connection lifecycle (create, revoke, audit) using your configured storage backend
 
 ### What the SDK does NOT do
-- Does not transmit raw end-user PII (such as name, email, or device identifiers) — each introspection request sends the opaque access token and your API key
-- Does not perform passive background telemetry or analytics — network calls occur only during active token validation
-- Does not maintain its own persistent storage — local state (connections, audit log) lives in the storage backend you configure
+- Does not transmit raw end-user PII (such as name, email, or device identifiers) - each introspection request sends the opaque access token and your API key
+- Does not perform passive background telemetry or analytics - network calls occur only during active token validation
+- Does not maintain its own persistent storage - local state (connections, audit log) lives in the storage backend you configure
 
 ### What the AgentAdmit hosted service records
 On every token validation, AgentAdmit's `/api/v1/verify` endpoint receives the access token and API key, resolves the token to its `user_id`, `connection_id`, granted `scopes`, and `agent_label`, and records per-call metadata (including the endpoint and timestamp) for billing, audit logging, the security alerts engine, and usage metering. This is integral to how AgentAdmit works and applies to both test and live keys. See the "Mandatory introspection" notes above and the [compliance guide](https://agentadmit.com/docs/compliance) for the full data-handling description.
@@ -242,10 +241,10 @@ const config = await getAlertConfig({ app_id: 'app_abc123' });
 
 ### Notifying Your Users
 
-AgentAdmit detects anomalies, fires alerts, and (with kill switch) auto-revokes connections. **How you notify your own users is up to you.** AgentAdmit provides the data — you deliver it through your own system (in-app notifications, email, push, etc.).
+AgentAdmit detects anomalies, fires alerts, and (with kill switch) auto-revokes connections. **How you notify your own users is up to you.** AgentAdmit provides the data - you deliver it through your own system (in-app notifications, email, push, etc.).
 
-- **Poll alerts** — Use the SDK methods above from your backend to check for new events, then notify users through your existing system.
-- **Webhook delivery** — Configure a webhook URL in your AgentAdmit dashboard. When an alert fires, AgentAdmit POSTs the payload to your server, signed with your `whsec_…` secret. Always verify the signature against the **raw** request body before trusting the payload:
+- **Poll alerts** - Use the SDK methods above from your backend to check for new events, then notify users through your existing system.
+- **Webhook delivery** - Configure a webhook URL in your AgentAdmit dashboard. When an alert fires, AgentAdmit POSTs the payload to your server, signed with your `whsec_…` secret. Always verify the signature against the **raw** request body before trusting the payload:
 
   ```ts
   import express from 'express';
@@ -270,5 +269,5 @@ AgentAdmit detects anomalies, fires alerts, and (with kill switch) auto-revokes 
   });
   ```
 
-  The header format is `t=<unix_ts>,v1=<hex>` — an HMAC-SHA256 of `${t}.${rawBody}` keyed with your signing secret. The helper compares in constant time and rejects timestamps more than 5 minutes off (replay protection).
-- **React SDK** — Embed the `<AlertsPanel>` component so users can view their own alert history and tighten thresholds.
+  The header format is `t=<unix_ts>,v1=<hex>` - an HMAC-SHA256 of `${t}.${rawBody}` keyed with your signing secret. The helper compares in constant time and rejects timestamps more than 5 minutes off (replay protection).
+- **React SDK** - Embed the `<AlertsPanel>` component so users can view their own alert history and tighten thresholds.
