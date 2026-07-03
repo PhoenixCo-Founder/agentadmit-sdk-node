@@ -99,6 +99,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/** Hard cap on any single retry wait — including a server-supplied Retry-After. */
+const MAX_RETRY_WAIT_MS = 30_000;
+/** Hard cap on cumulative wait across all retries of a single verify call. */
+const MAX_RETRY_BUDGET_MS = 120_000;
+
 /**
  * POST to the AgentAdmit introspection endpoint with automatic 429 retry.
  *
@@ -106,8 +111,10 @@ function sleep(ms: number): Promise<void> {
  *   - Initial delay: 1 second
  *   - Each retry doubles the delay, capped at 30 seconds
  *   - Each delay adds 0–500 ms of random jitter
- *   - Honors Retry-After header if present
- *   - After maxRetries exhausted, throws RateLimitError
+ *   - Honors Retry-After header if present, capped at 30 seconds
+ *     (Retry-After is untrusted server input and must not pin the caller)
+ *   - Cumulative wait across retries is capped at 120 seconds
+ *   - After maxRetries or the wait budget is exhausted, throws RateLimitError
  */
 async function introspectWithRetry(
   verifyUrl: string,
@@ -117,6 +124,7 @@ async function introspectWithRetry(
   maxRetries: number,
 ): Promise<globalThis.Response> {
   let delay = 1000; // ms
+  let waitedMs = 0; // cumulative wait across retries
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response: globalThis.Response;
@@ -153,9 +161,21 @@ async function introspectWithRetry(
       });
     }
 
-    const waitMs = retryAfter !== null ? retryAfter * 1000 : Math.min(delay, 30_000);
+    const requestedMs = retryAfter !== null ? retryAfter * 1000 : delay;
+    const waitMs = Math.min(Math.max(0, requestedMs), MAX_RETRY_WAIT_MS);
     const jitterMs = Math.random() * 500; // 0–500 ms
     const totalWaitMs = waitMs + jitterMs;
+
+    if (waitedMs + totalWaitMs > MAX_RETRY_BUDGET_MS) {
+      throw new RateLimitError({
+        message: `AgentAdmit rate limit retry budget (${MAX_RETRY_BUDGET_MS / 1000}s) exhausted.`,
+        retryAfter,
+        limit,
+        remaining,
+        reset,
+      });
+    }
+    waitedMs += totalWaitMs;
 
     console.warn(
       `[AgentAdmit] Rate-limited (attempt ${attempt + 1}/${maxRetries}). ` +
