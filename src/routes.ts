@@ -245,14 +245,30 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         return res.status(400).json({ error: 'already_revoked' });
       }
 
-      // Notify hosted service
+      // Revoke at the hosted service FIRST — that's where enforcement
+      // happens. If this fails, the agent's token still verifies, so
+      // reporting revoked:true would be false comfort. 404 means the hosted
+      // service has no such connection — nothing to revoke there, proceed.
       try {
-        await callHostedService('/api/v1/revoke', {
+        const { status, data } = await callHostedService('/api/v1/revoke', {
           connection_id: req.params.connectionId,
           reason: 'user_requested',
         });
+        if (!(status >= 200 && status < 300) && status !== 404) {
+          console.error('[AgentAdmit] Hosted revoke failed:', status, data);
+          return res.status(502).json({
+            revoked: false,
+            error: 'revoke_failed',
+            error_description: 'Authorization service could not revoke the connection. Try again.',
+          });
+        }
       } catch (e) {
-        console.warn('[AgentAdmit] Hosted revoke failed, revoking locally:', e);
+        console.error('[AgentAdmit] Hosted revoke failed (network):', e);
+        return res.status(502).json({
+          revoked: false,
+          error: 'revoke_failed',
+          error_description: 'Authorization service could not be reached. Try again.',
+        });
       }
 
       await storage.revokeConnection(req.params.connectionId);
