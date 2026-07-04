@@ -203,6 +203,35 @@ For complete compliance guidance, see our [compliance guide](https://agentadmit.
 
 All rights reserved. Patent pending.
 
+## Consent Ledger (Caller-Identity Consent)
+
+AgentAdmit can host per-user consent switches for three independent caller classes: `human_session`, `in_app_ai`, and `external_agent`. No class's setting implies another's.
+
+**External agents:** the verify response already includes the verdict; it rides into your middleware context as `req.agentAdmit.consent`:
+
+```typescript
+app.get('/api/workouts', requireScope('read:workouts'), (req, res) => {
+  const { consent } = (req as any).agentAdmit;
+  if (consent && !consent.granted) {
+    return res.status(403).json({ error: 'consent_not_granted' });
+  }
+  // serve the data
+});
+```
+
+**Human sessions and in-app AI** never hold AgentAdmit tokens, so ask directly:
+
+```typescript
+import { checkConsent } from '@agentadmit/sdk';
+
+const verdict = await checkConsent({ appUserId: 'user_8842', callerClass: 'in_app_ai' });
+if (!verdict.granted) {
+  // do not run AI over this user's data
+}
+```
+
+Consent is orthogonal to revocation: a denied verdict means your app returns its own 403; the connection and token stay valid so the user can flip consent back on without re-connecting. Write the switches through `PUT /api/v1/consent/settings` from your backend, and export the full audit trail with `GET /api/v1/consent/export` (every plan).
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:

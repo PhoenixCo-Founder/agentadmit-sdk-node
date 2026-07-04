@@ -9,6 +9,7 @@ import { getConfig } from './config';
 import { loadPublicKey } from './keys';
 import { StorageBackend } from './storage';
 import { RateLimitError } from './errors';
+import type { ConsentVerdict } from './consent';
 
 let _storage: StorageBackend | null = null;
 let _verifyUserToken: ((token: string) => string | Promise<string>) | null = null;
@@ -37,6 +38,8 @@ export interface AgentContext {
   user: Record<string, any>;
   connection: Record<string, any> | null;
   scopes: string[];
+  /** Consent Ledger verdict for the external-agent path, when present. */
+  consent?: ConsentVerdict;
 }
 
 /**
@@ -66,6 +69,8 @@ export interface VerifyActive {
   app_id?: string;
   jti?: string;
   exp?: number;
+  /** Consent Ledger verdict (external-agent path). Additive; may be absent. */
+  consent?: ConsentVerdict;
 }
 
 /** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
@@ -283,7 +288,13 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
     agent_label: data.agent_label || 'Unknown Agent',
   };
 
-  return { user, connection, scopes };
+  // Consent Ledger verdict rides along when the platform returns it.
+  const consent =
+    data.consent && typeof data.consent === 'object' && typeof data.consent.granted === 'boolean'
+      ? (data.consent as ConsentVerdict)
+      : undefined;
+
+  return consent !== undefined ? { user, connection, scopes, consent } : { user, connection, scopes };
 }
 
 /**
