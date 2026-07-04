@@ -1,6 +1,6 @@
 /**
  * agentadmit/consent.ts
- * Consent Ledger client — hosted caller-identity consent verdicts.
+ * Consent Ledger client: hosted caller-identity consent verdicts.
  *
  * External agents get their verdict inline in the verify response
  * (VerifyActive.consent / AgentContext.consent). The two token-less caller
@@ -34,14 +34,15 @@ export interface CheckConsentOptions {
 
 async function callConsentEndpoint(path: string, body: Record<string, any>): Promise<any> {
   const config = getConfig();
-  const base = ((config as any).agentadmit_api_url || 'https://api.agentadmit.com').replace(/\/$/, '');
+  const base = (config.agentadmit_api_url || 'https://api.agentadmit.com').replace(/\/$/, '');
   const resp = await fetch(`${base}${path}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${(config as any).api_key || ''}`,
+      Authorization: `Bearer ${config.api_key || ''}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!resp.ok) {
     const errData = (await resp.json().catch(() => ({}))) as Record<string, any>;
