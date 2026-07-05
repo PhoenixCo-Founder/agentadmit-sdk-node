@@ -232,6 +232,27 @@ if (!verdict.granted) {
 
 Consent is orthogonal to revocation: a denied verdict means your app returns its own 403; the connection and token stay valid so the user can flip consent back on without re-connecting. Write the switches through `PUT /api/v1/consent/settings` from your backend, and export the full audit trail with `GET /api/v1/consent/export` (every plan).
 
+## Presence Verification (Human Presence)
+
+Connections authorized on the AgentAdmit hosted consent page can require a WebAuthn ceremony (Touch ID, Windows Hello, a security key) before the token is generated. The verify response reports the fact on every introspection as `presence`, and it rides into your middleware context as `req.agentAdmit.presence`:
+
+```typescript
+import { requirePresence, presenceVerified } from '@agentadmit/sdk';
+
+// Gate a sensitive route on a presence-verified connection (403 otherwise):
+app.post('/api/transfers', requirePresence(), transferHandler);
+
+// Or branch on it yourself:
+app.get('/api/workouts', requireScope('read:workouts'), (req, res) => {
+  const ctx = (req as any).agentAdmit;
+  if (!presenceVerified(ctx)) {
+    // connection was minted without a human presence ceremony
+  }
+});
+```
+
+To require presence at authorization time, create the consent session with `"presence": "required"`; token generation fails closed until a human completes the ceremony. `requirePresence()` is strict: connections from servers or sessions that never ran a ceremony report `verified: false` and are rejected.
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:
