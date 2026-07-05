@@ -15,13 +15,15 @@ export {
   validateAgentToken,
   requireScope,
   requireScopeIfAgent,
+  requirePresence,
+  presenceVerified,
   resolveAuth,
   checkConnectionCap,
   setStorage,
   setUserVerifier,
   VERIFY_ERROR_CODES,
 } from './auth';
-export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive } from './auth';
+export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, PresenceInfo } from './auth';
 
 export { checkConsent, CALLER_CLASSES } from './consent';
 export type { CallerClass, ConsentVerdict, ConsentSource, CheckConsentOptions } from './consent';

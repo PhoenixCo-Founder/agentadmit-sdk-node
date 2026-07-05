@@ -40,6 +40,25 @@ export interface AgentContext {
   scopes: string[];
   /** Consent Ledger verdict for the external-agent path, when present. */
   consent?: ConsentVerdict;
+  /** Human-presence fact for the connection, when the platform returns it. */
+  presence?: PresenceInfo;
+}
+
+/**
+ * Human-presence fact from the WebAuthn step-up: whether the human who
+ * authorized this connection completed a presence ceremony on the consent
+ * page. Additive — absent on older servers, and `verified: false` for
+ * connections minted without a ceremony (direct-API tokens, presence-off
+ * sessions, pre-presence connections).
+ */
+export interface PresenceInfo {
+  verified: boolean;
+  /** Ceremony type, e.g. 'webauthn'. null when never verified. */
+  method: string | null;
+  /** Authenticator user-verification flag reported by the ceremony. */
+  uv: boolean | null;
+  /** ISO-8601 timestamp of the ceremony. null when never verified. */
+  verified_at: string | null;
 }
 
 /**
@@ -71,6 +90,8 @@ export interface VerifyActive {
   exp?: number;
   /** Consent Ledger verdict (external-agent path). Additive; may be absent. */
   consent?: ConsentVerdict;
+  /** Human-presence fact for the connection. Additive; may be absent. */
+  presence?: PresenceInfo;
 }
 
 /** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
@@ -294,7 +315,61 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
       ? (data.consent as ConsentVerdict)
       : undefined;
 
-  return consent !== undefined ? { user, connection, scopes, consent } : { user, connection, scopes };
+  // Human-presence fact rides along when the platform returns it. Same
+  // strictness as `active`: verified must be boolean true/false, never coerced.
+  const presence =
+    data.presence && typeof data.presence === 'object' && typeof data.presence.verified === 'boolean'
+      ? (data.presence as PresenceInfo)
+      : undefined;
+
+  return {
+    user,
+    connection,
+    scopes,
+    ...(consent !== undefined ? { consent } : {}),
+    ...(presence !== undefined ? { presence } : {}),
+  };
+}
+
+/**
+ * True when the connection behind this context was authorized by a human who
+ * completed a presence ceremony (WebAuthn) on the consent page. Strict:
+ * absent or malformed presence data is NOT verified.
+ */
+export function presenceVerified(ctx: { presence?: PresenceInfo }): boolean {
+  return ctx.presence?.verified === true;
+}
+
+/**
+ * Express middleware: require a presence-verified connection (agent-only).
+ * 403 `presence_required` when the connection was minted without a completed
+ * WebAuthn ceremony — including all connections from servers that predate
+ * the presence feature (fail closed, mirroring requireScope's posture).
+ */
+export function requirePresence() {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const token = getBearerToken(req);
+    const config = getConfig();
+
+    if (!token || !token.startsWith(config.token_prefix_access)) {
+      return res.status(401).json({ error: 'invalid_token', error_description: 'AgentAdmit token required' });
+    }
+
+    try {
+      const ctx = await validateAgentToken(token);
+      if (!presenceVerified(ctx)) {
+        return res.status(403).json({
+          error: 'presence_required',
+          error_description: 'This action requires a connection authorized with human presence verification.',
+        });
+      }
+
+      (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
+      next();
+    } catch (err: any) {
+      return res.status(401).json({ error: 'invalid_token', error_description: err.message });
+    }
+  };
 }
 
 /**
