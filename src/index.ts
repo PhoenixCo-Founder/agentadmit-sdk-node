@@ -28,6 +28,9 @@ export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, Prese
 export { checkConsent, CALLER_CLASSES } from './consent';
 export type { CallerClass, ConsentVerdict, ConsentSource, CheckConsentOptions } from './consent';
 
+export { callerConsent, classifyCaller } from './callerConsent';
+export type { CallerConsentOptions, CallerConsentContext, NonAgentClass } from './callerConsent';
+
 export {
   verifyWebhookSignature,
   isValidWebhookSignature,
