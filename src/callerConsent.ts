@@ -22,6 +22,15 @@
  *                    with `gateHuman: true`.
  *
  * The three decisions are independent: granting one never grants another.
+ *
+ * SECURITY: this is a consent gate, not an authenticator. It classifies the
+ * caller and enforces the per-class CONSENT decision; it does not by itself
+ * authenticate a human session. Run it AFTER your own authentication. On the
+ * human_session path it defers to your application's permission model and
+ * calls next() without re-authenticating, so a request carrying no agent
+ * token reaches your handler as a human session for your own authorization
+ * to judge. The external_agent path is always authenticated (hosted token
+ * introspection); the in_app_ai path always evaluates the ledger.
  */
 
 import { Request, Response, NextFunction, RequestHandler } from 'express';
