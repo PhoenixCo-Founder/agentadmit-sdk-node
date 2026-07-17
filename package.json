@@ -14,8 +14,7 @@
   "dependencies": {
     "js-yaml": "4.1.0",
     "jsonwebtoken": "9.0.0",
-    "mongodb": "6.0.0",
-    "uuid": "9.0.0"
+    "mongodb": "6.0.0"
   },
   "devDependencies": {
     "@types/express": "4.17.0",
@@ -23,7 +22,6 @@
     "@types/js-yaml": "4.0.0",
     "@types/jsonwebtoken": "9.0.0",
     "@types/node": "22.19.20",
-    "@types/uuid": "9.0.0",
     "express": "^4.22.2",
     "jest": "29.0.0",
     "ts-jest": "29.0.0",
