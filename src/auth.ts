@@ -3,7 +3,7 @@
  * Token validation, scope enforcement, and audit logging for Express.
  */
 
-import { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { getConfig } from './config';
 import { loadPublicKey } from './keys';

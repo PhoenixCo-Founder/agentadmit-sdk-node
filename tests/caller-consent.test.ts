@@ -56,7 +56,15 @@ const VERIFY_ACTIVE = {
   connection_id: 'conn_1',
   scopes: ['read:things'],
   agent_label: 'Test Agent',
+  consent: { caller_class: 'external_agent', granted: true, source: 'app_default', evaluated_at: 'x' },
 };
+
+// Introspection response WITHOUT a consent verdict — the hosted service omits
+// the block when its consent read fails; the SDK must resolve via the ledger.
+const VERIFY_ACTIVE_NO_VERDICT = (({ consent: _c, ...rest }) => rest)(VERIFY_ACTIVE);
+
+const LEDGER_ALLOW = { caller_class: 'external_agent', granted: true, source: 'app_default', evaluated_at: 'x' };
+const LEDGER_DENY = { caller_class: 'external_agent', granted: false, source: 'setting', evaluated_at: 'x' };
 
 describe('classifyCaller', () => {
   const realFetch = global.fetch;
@@ -118,11 +126,57 @@ describe('callerConsent — external_agent path', () => {
     expect(res.body.caller_class).toBe('external_agent');
   });
 
-  it('allows when no consent block is present (platform default held)', async () => {
-    global.fetch = jest.fn().mockResolvedValue(jsonResponse(VERIFY_ACTIVE)) as any;
+  it('resolves an absent verdict via the Consent Ledger — allow', async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(VERIFY_ACTIVE_NO_VERDICT)) // introspection
+      .mockResolvedValueOnce(jsonResponse(LEDGER_ALLOW)); // /consent/check fallback
+    global.fetch = fetchMock as any;
     const { req, res, next, wasNext } = mockReqRes({ authorization: 'Bearer ag_at_tok' });
     await callerConsent()(req, res, next);
     expect(wasNext()).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const ledgerCall = fetchMock.mock.calls[1];
+    expect(String(ledgerCall[0])).toContain('/consent/check');
+    expect(JSON.parse(ledgerCall[1].body).caller_class).toBe('external_agent');
+    expect(req.agentAdmit.consent.granted).toBe(true); // resolved verdict on the context
+  });
+
+  it('resolves an absent verdict via the Consent Ledger — deny', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(VERIFY_ACTIVE_NO_VERDICT))
+      .mockResolvedValueOnce(jsonResponse(LEDGER_DENY)) as any;
+    const { req, res, next, wasNext } = mockReqRes({ authorization: 'Bearer ag_at_tok' });
+    await callerConsent()(req, res, next);
+    expect(wasNext()).toBe(false);
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error).toBe('consent_not_granted');
+  });
+
+  it('fails closed (503) when the verdict is absent and the ledger errors', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(VERIFY_ACTIVE_NO_VERDICT))
+      .mockRejectedValueOnce(new TypeError('fetch failed')) as any;
+    const { req, res, next, wasNext } = mockReqRes({ authorization: 'Bearer ag_at_tok' });
+    await callerConsent()(req, res, next);
+    expect(wasNext()).toBe(false);
+    expect(res.statusCode).toBe(503);
+    expect(res.body.error).toBe('consent_unavailable');
+  });
+
+  it('checks consent BEFORE scope: denied consent wins over missing scope', async () => {
+    // FIG. 3 stage order — the caller must not learn scope state
+    // (insufficient_scope + granted_scopes) when its class consent is denied.
+    global.fetch = jest.fn().mockResolvedValue(
+      jsonResponse({ ...VERIFY_ACTIVE, consent: { caller_class: 'external_agent', granted: false, source: 'setting', evaluated_at: 'x' } }),
+    ) as any;
+    const { req, res, next, wasNext } = mockReqRes({ authorization: 'Bearer ag_at_tok' });
+    await callerConsent({ requiredScope: 'write:things' })(req, res, next); // scope ALSO missing
+    expect(wasNext()).toBe(false);
+    expect(res.body.error).toBe('consent_not_granted');
+    expect(res.body.granted_scopes).toBeUndefined();
   });
 
   it('returns 401 on an invalid agent token', async () => {

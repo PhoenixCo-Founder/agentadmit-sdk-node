@@ -13,7 +13,11 @@
  *
  *   external_agent : an `ag_at_` access token -> hosted introspection, which
  *                    returns the external-agent consent verdict inline plus the
- *                    granted scopes. Enforced here directly.
+ *                    granted scopes. Consent is evaluated BEFORE scope (a
+ *                    denied class must not learn scope state or step-up
+ *                    guidance). A missing or malformed verdict is resolved
+ *                    through the Consent Ledger, fail-closed — absence is
+ *                    never a grant.
  *   in_app_ai      : your application's own server-side AI code path -> the
  *                    Consent Ledger `/consent/check` for the in-app-AI class.
  *   human_session  : your application's own permission model (sharing, roles,
@@ -33,7 +37,7 @@
  * introspection); the in_app_ai path always evaluates the ledger.
  */
 
-import { Request, Response, NextFunction, RequestHandler } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { getConfig } from './config';
 import { validateAgentToken } from './auth';
 import { checkConsent, CallerClass } from './consent';
@@ -137,6 +141,36 @@ export function callerConsent(options: CallerConsentOptions = {}): RequestHandle
         return res.status(401).json({ error: 'invalid_token', error_description: err.message });
       }
 
+      // Consent first (Patent FIG. 3: the class consent decision precedes
+      // scope evaluation). Checking scope first leaked granted-scope state and
+      // step-up guidance to callers whose class the owner had denied. The
+      // hosted service omits the verdict when its consent read fails (designed
+      // degraded mode), so an absent or malformed verdict is resolved through
+      // the Consent Ledger — never treated as a grant.
+      let consent = ctx.consent;
+      if (!consent || typeof consent.granted !== 'boolean') {
+        const config = getConfig();
+        const owner = (ctx.user as any)?.[config.user_lookup_field];
+        if (!owner || typeof owner !== 'string') {
+          return res.status(503).json({
+            error: 'consent_unavailable',
+            error_description: 'introspection carried no consent verdict and no resolvable data owner',
+          });
+        }
+        try {
+          consent = await checkConsent({ appUserId: owner, callerClass: 'external_agent', scopeGroup: options.scopeGroup });
+        } catch (err: any) {
+          return res.status(503).json({ error: 'consent_unavailable', error_description: err.message });
+        }
+      }
+      if (consent.granted !== true) {
+        return res.status(403).json({
+          error: 'consent_not_granted',
+          caller_class: 'external_agent',
+          source: consent.source,
+        });
+      }
+
       if (options.requiredScope && !ctx.scopes.includes(options.requiredScope)) {
         return res.status(403).json({
           error: 'insufficient_scope',
@@ -145,19 +179,7 @@ export function callerConsent(options: CallerConsentOptions = {}): RequestHandle
         });
       }
 
-      // The verify response embeds the external-agent consent verdict (with
-      // any presence-policy conditioning already applied server-side). A
-      // present-and-denied verdict fails closed; an absent verdict means the
-      // platform default (external-agent allowed) held, so we do not re-check.
-      if (ctx.consent && ctx.consent.granted === false) {
-        return res.status(403).json({
-          error: 'consent_not_granted',
-          caller_class: 'external_agent',
-          source: ctx.consent.source,
-        });
-      }
-
-      (req as any).agentAdmit = { auth_type: 'agent', caller_class: 'external_agent', ...ctx };
+      (req as any).agentAdmit = { auth_type: 'agent', caller_class: 'external_agent', ...ctx, consent };
       return next();
     }
 

@@ -207,17 +207,22 @@ All rights reserved. Patent pending.
 
 AgentAdmit can host per-user consent switches for three independent caller classes: `human_session`, `in_app_ai`, and `external_agent`. No class's setting implies another's.
 
-**External agents:** the verify response already includes the verdict; it rides into your middleware context as `req.agentAdmit.consent`:
+**External agents:** the verify response already includes the verdict; it rides into your middleware context as `req.agentAdmit.consent`. The hosted service deliberately omits the verdict when its consent store is unreadable (degraded mode), so treat an absent verdict as *unresolved*, never as a grant — resolve it with `checkConsent`:
 
 ```typescript
-app.get('/api/workouts', requireScope('read:workouts'), (req, res) => {
-  const { consent } = (req as any).agentAdmit;
-  if (consent && !consent.granted) {
+app.get('/api/workouts', requireScope('read:workouts'), async (req, res) => {
+  let { consent, user } = (req as any).agentAdmit;
+  if (!consent || typeof consent.granted !== 'boolean') {
+    consent = await checkConsent({ appUserId: user.user_id, callerClass: 'external_agent' }); // fail closed on error
+  }
+  if (consent.granted !== true) {
     return res.status(403).json({ error: 'consent_not_granted' });
   }
   // serve the data
 });
 ```
+
+The `callerConsent()` middleware does all of this for you: it evaluates the consent verdict **before** the scope check (a caller whose class the owner denied learns nothing about scope state or step-up) and resolves an absent verdict through the Consent Ledger, fail-closed.
 
 **Human sessions and in-app AI** never hold AgentAdmit tokens, so ask directly:
 

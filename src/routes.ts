@@ -7,11 +7,29 @@
  * owns all cryptographic operations.
  */
 
-import { Router, Request, Response } from 'express';
+import type { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { getConfig, getScopeMetadata, getDurationOptions } from './config';
 import { StorageBackend } from './storage';
 import { checkConnectionCap } from './auth';
+
+// express is an OPTIONAL peer dependency: only createAgentAdmitRouter needs
+// it, and non-Express consumers (auth-only usage, Next.js API routes) must be
+// able to require the SDK without it installed. Through 1.5.0 the top-level
+// value import above made a bare `npm install @agentadmit/sdk` +
+// `require('@agentadmit/sdk')` crash with MODULE_NOT_FOUND, because index.ts
+// re-exports this module unconditionally — so the runtime require is deferred
+// to the moment a router is actually created.
+function requireExpressRouterFactory(): () => Router {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('express').Router;
+  } catch {
+    throw new Error(
+      "createAgentAdmitRouter requires the optional peer dependency 'express'. Install it with: npm install express",
+    );
+  }
+}
 
 // Version from the package manifest — bumping package.json is the whole
 // release step. Works from src/ (dev) and dist/ (published) alike.
@@ -76,6 +94,7 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
     return { valid: invalid.length === 0, invalid };
   });
 
+  const Router = requireExpressRouterFactory();
   const wellknownRouter = Router();
   const agentadmitRouter = Router();
 

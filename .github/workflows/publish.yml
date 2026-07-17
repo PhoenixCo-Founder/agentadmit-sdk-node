@@ -61,5 +61,18 @@ jobs:
       - name: Run tests
         run: npm test --if-present
 
+      # The dev environment always has express (devDependencies), which masked
+      # a shipped crash: through 1.5.0 a bare `npm install @agentadmit/sdk`
+      # crashed on require because routes.ts imported express at top level while
+      # express is only an optional peer. Installing the packed tarball into an
+      # EMPTY project (no express) and requiring is the only check that catches
+      # that class of bug.
+      - name: Clean-install smoke test (no peer deps)
+        run: |
+          npm pack
+          mkdir /tmp/smoke && cd /tmp/smoke && npm init -y
+          npm install --ignore-scripts "$GITHUB_WORKSPACE"/agentadmit-sdk-*.tgz
+          node -e "const s=require('@agentadmit/sdk'); if (typeof s.validateAgentToken!=='function'||typeof s.callerConsent!=='function') throw new Error('missing exports'); console.log('clean require OK')"
+
       - name: Publish with trusted publishing
         run: npm publish --access public
