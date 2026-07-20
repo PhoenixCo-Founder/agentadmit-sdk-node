@@ -41,6 +41,7 @@ export {
 export type { VerifyWebhookSignatureOptions } from './webhooks';
 
 export { createAgentAdmitRouter } from './routes';
+export type { RouterOptions } from './routes';
 
 export { RateLimitError } from './errors';
 

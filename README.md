@@ -258,6 +258,44 @@ app.get('/api/workouts', requireScope('read:workouts'), (req, res) => {
 
 To require presence at authorization time, create the consent session with `"presence": "required"`; token generation fails closed until a human completes the ceremony. `requirePresence()` is strict: connections from servers or sessions that never ran a ceremony report `verified: false` and are rejected.
 
+### Presence gate for embedded token minting
+
+If you mount the SDK's user-authenticated `/agentadmit/connections/generate-token`
+route inside your own app, gate that route with your app's own human-presence
+ceremony. A browser-driving agent can ride a logged-in user session, so scoped
+token minting should require a fresh passkey, WebAuthn, or equivalent
+out-of-band confirmation before the hosted token call is made.
+
+```typescript
+const { wellknownRouter, agentadmitRouter } = createAgentAdmitRouter({
+  storage,
+  getCurrentUser: async (req) => req.user ?? null,
+  requireTokenMintPresence: async (req, currentUser) => {
+    const ok = await verifyAndConsumePasskeyAttestation({
+      userId: currentUser.user_id,
+      attestationId: req.body?.presence_attestation_id,
+      purpose: 'token_mint',
+    });
+    if (!ok) {
+      const err: any = new Error('Confirm human presence before generating a connection token');
+      err.statusCode = 403;
+      err.detail = { error: 'presence_attestation_required' };
+      throw err;
+    }
+  },
+});
+```
+
+The hook runs after user authentication and local request validation, and before
+AgentAdmit's hosted token mint or any local connection record is written. If no
+hook is configured, existing apps keep the previous behavior.
+
+**Throw to deny.** The hook must `throw` to deny (attach `statusCode`/`detail`
+for a custom response), and must *verify and consume* the attestation
+single-use (checking alone lets it be replayed). Returning nothing allows the
+mint; returning any value fails closed with a `500` so a misconfigured hook
+that returns a denial object instead of throwing can never let the mint proceed.
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:
