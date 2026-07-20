@@ -290,6 +290,12 @@ The hook runs after user authentication and local request validation, and before
 AgentAdmit's hosted token mint or any local connection record is written. If no
 hook is configured, existing apps keep the previous behavior.
 
+**Throw to deny.** The hook must `throw` to deny (attach `statusCode`/`detail`
+for a custom response), and must *verify and consume* the attestation
+single-use (checking alone lets it be replayed). Returning nothing allows the
+mint; returning any value fails closed with a `500` so a misconfigured hook
+that returns a denial object instead of throwing can never let the mint proceed.
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:

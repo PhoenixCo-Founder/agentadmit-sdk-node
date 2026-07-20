@@ -247,6 +247,23 @@ describe('POST /connections/generate-token — token mint presence hook', () => 
     expect(storage.storeConnection).not.toHaveBeenCalled();
   });
 
+  it('fails closed when the hook RETURNS instead of throwing to deny', async () => {
+    // Operator mistake: returns a denial object instead of throwing. Must NOT
+    // fall through to the mint (fail-open) — must fail closed with 500.
+    const requireTokenMintPresence = jest.fn((_req) => {
+      return { error: 'denied' };
+    });
+    await startApp(requireTokenMintPresence);
+
+    const res = await mint({ scopes: ['read:things'] });
+    const body = await res.json() as Record<string, any>;
+
+    expect(res.status).toBe(500);
+    expect(body.error).toBe('presence_hook_misconfigured');
+    expect(hostedCalls).toEqual([]);
+    expect(storage.storeConnection).not.toHaveBeenCalled();
+  });
+
   it('allows hosted mint after the hook verifies presence', async () => {
     const requireTokenMintPresence = jest.fn((_req, currentUser) => {
       expect(currentUser.user_id).toBe('u1');

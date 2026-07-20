@@ -174,7 +174,18 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
 
       if (options.requireTokenMintPresence) {
         try {
-          await options.requireTokenMintPresence(req, currentUser);
+          const result = await options.requireTokenMintPresence(req, currentUser);
+          // Contract: the hook THROWS to deny; returning nothing allows the
+          // mint. A returned value is a contract violation — fail CLOSED so a
+          // misconfigured hook that returns a "denial" object instead of
+          // throwing can never silently let the mint proceed (fail-open).
+          if (result !== undefined && result !== null) {
+            return res.status(500).json({
+              error: 'presence_hook_misconfigured',
+              error_description:
+                'The token-mint presence hook must throw to deny; it must not return a value.',
+            });
+          }
         } catch (err: any) {
           const denial = tokenMintPresenceErrorResponse(err);
           return res.status(denial.status).json(denial.data);
