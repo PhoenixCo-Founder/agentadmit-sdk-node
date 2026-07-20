@@ -146,3 +146,128 @@ describe('POST /token exchange', () => {
     expect(doc.agentadmit_version).not.toBe('0.1');
   });
 });
+
+describe('POST /connections/generate-token — token mint presence hook', () => {
+  let server: ReturnType<express.Express['listen']>;
+  let baseUrl: string;
+  let hostedCalls: Array<{ body: any; headers: any }> = [];
+  const realFetch = global.fetch;
+
+  const storage: any = {
+    storeConnection: jest.fn(),
+    listConnections: jest.fn().mockResolvedValue([]),
+    getConnection: jest.fn(),
+    updateConnection: jest.fn(),
+    logAccess: jest.fn(),
+  };
+
+  function startApp(requireTokenMintPresence?: any): Promise<void> {
+    return new Promise((resolve) => {
+      loadConfig(writeTestConfig());
+      jest.clearAllMocks();
+      hostedCalls = [];
+
+      global.fetch = jest.fn(async (url: any, init?: any) => {
+        if (String(url).startsWith(HOSTED_URL)) {
+          hostedCalls.push({
+            body: init?.body ? JSON.parse(init.body) : null,
+            headers: init?.headers ?? {},
+          });
+          return new Response(
+            JSON.stringify({
+              token: 'ag_ct_new',
+              connection_id: 'conn_1',
+              expires_in: 3600,
+            }),
+            { status: 201, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return realFetch(url as any, init);
+      }) as any;
+
+      const { agentadmitRouter, wellknownRouter } = createAgentAdmitRouter({
+        storage,
+        getCurrentUser: async () => ({ user_id: 'u1' }),
+        requireTokenMintPresence,
+      });
+      const app = express();
+      app.use(express.json());
+      app.use('/agentadmit', agentadmitRouter);
+      app.use(wellknownRouter);
+      server = app.listen(0, () => {
+        baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        resolve();
+      });
+    });
+  }
+
+  function stopApp(): Promise<void> {
+    return new Promise((resolve) => {
+      global.fetch = realFetch;
+      server.close(() => resolve());
+    });
+  }
+
+  async function mint(body: Record<string, any>) {
+    return realFetch(`${baseUrl}/agentadmit/connections/generate-token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  afterEach(async () => {
+    if (server) {
+      await stopApp();
+    } else {
+      global.fetch = realFetch;
+    }
+  });
+
+  it('blocks hosted mint and storage when the hook denies presence', async () => {
+    const requireTokenMintPresence = jest.fn((_req) => {
+      const err: any = new Error('Confirm human presence before generating a connection token.');
+      err.statusCode = 403;
+      err.detail = {
+        error: 'presence_attestation_required',
+        error_description: 'Confirm human presence before generating a connection token.',
+      };
+      throw err;
+    });
+    await startApp(requireTokenMintPresence);
+
+    const res = await mint({ scopes: ['read:things'] });
+    const body = await res.json() as Record<string, any>;
+
+    expect(res.status).toBe(403);
+    expect(body.error).toBe('presence_attestation_required');
+    expect(requireTokenMintPresence).toHaveBeenCalledTimes(1);
+    expect(requireTokenMintPresence.mock.calls[0][0].body).toEqual({ scopes: ['read:things'] });
+    expect(hostedCalls).toEqual([]);
+    expect(storage.storeConnection).not.toHaveBeenCalled();
+  });
+
+  it('allows hosted mint after the hook verifies presence', async () => {
+    const requireTokenMintPresence = jest.fn((_req, currentUser) => {
+      expect(currentUser.user_id).toBe('u1');
+    });
+    await startApp(requireTokenMintPresence);
+
+    const res = await mint({
+      scopes: ['read:things'],
+      presence_attestation_id: 'patt_ok',
+    });
+    const body = await res.json() as Record<string, any>;
+
+    expect(res.status).toBe(200);
+    expect(body.connection_token).toBe('ag_ct_new');
+    expect(requireTokenMintPresence).toHaveBeenCalledTimes(1);
+    expect(requireTokenMintPresence.mock.calls[0][0].body.presence_attestation_id).toBe('patt_ok');
+    expect(hostedCalls[0].body).toEqual({
+      user_id: 'u1',
+      scopes: ['read:things'],
+      role: 'user',
+    });
+    expect(storage.storeConnection).toHaveBeenCalledTimes(1);
+  });
+});

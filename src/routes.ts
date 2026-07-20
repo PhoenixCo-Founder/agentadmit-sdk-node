@@ -41,13 +41,14 @@ try {
   /* keep fallback */
 }
 
-interface RouterOptions {
+export interface RouterOptions {
   storage: StorageBackend;
   getCurrentUser: (req: Request) => Promise<Record<string, any> | null>;
   determineRole?: (user: Record<string, any>) => string;
   getUserTier?: (user: Record<string, any>) => string;
   validateScopes?: (scopes: string[], user: Record<string, any>) => { valid: boolean; invalid: string[] };
   getEndpointsForScopes?: (scopes: string[]) => Record<string, any>[];
+  requireTokenMintPresence?: (req: Request, currentUser: Record<string, any>) => Promise<void> | void;
 }
 
 /**
@@ -79,6 +80,25 @@ async function callHostedService(
 
   const data = await resp.json().catch(() => ({}));
   return { status: resp.status, data };
+}
+
+function tokenMintPresenceErrorResponse(err: any): { status: number; data: Record<string, any> } {
+  const status = Number.isInteger(err?.statusCode)
+    ? err.statusCode
+    : Number.isInteger(err?.status)
+      ? err.status
+      : 403;
+
+  const data = err?.detail && typeof err.detail === 'object'
+    ? err.detail
+    : err?.body && typeof err.body === 'object'
+      ? err.body
+      : {
+          error: err?.code || 'presence_attestation_required',
+          error_description: err?.message || 'Human presence verification is required before generating a connection token.',
+        };
+
+  return { status, data };
 }
 
 export function createAgentAdmitRouter(options: RouterOptions): { wellknownRouter: Router; agentadmitRouter: Router } {
@@ -151,6 +171,15 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       const userTier = getUserTier(currentUser);
 
       await checkConnectionCap(userId, userTier);
+
+      if (options.requireTokenMintPresence) {
+        try {
+          await options.requireTokenMintPresence(req, currentUser);
+        } catch (err: any) {
+          const denial = tokenMintPresenceErrorResponse(err);
+          return res.status(denial.status).json(denial.data);
+        }
+      }
 
       // Call AgentAdmit hosted service. duration_seconds is tri-state:
       // key absent → hosted default (30 days); explicit null → until
