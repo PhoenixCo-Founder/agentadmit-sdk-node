@@ -156,9 +156,22 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       const currentUser = await getCurrentUser(req);
       if (!currentUser) return res.status(401).json({ error: 'unauthorized' });
 
-      const { scopes, duration_seconds, label } = req.body;
+      const { scopes, duration_seconds, label, purpose } = req.body;
       if (!scopes || !Array.isArray(scopes)) {
         return res.status(400).json({ error: 'invalid_request', error_description: 'scopes array required' });
+      }
+
+      // Declared purpose: the user-facing reason recorded on the grant at the
+      // consent moment. Review-time record only, never an enforcement input;
+      // authorization decisions ride scopes, connection status, and consent.
+      // Optional (1..300 chars). Absent/null → the key is omitted downstream.
+      if (purpose !== undefined && purpose !== null) {
+        if (typeof purpose !== 'string' || purpose.length < 1 || purpose.length > 300) {
+          return res.status(400).json({
+            error: 'invalid_request',
+            error_description: 'purpose must be a string of 1 to 300 characters',
+          });
+        }
       }
 
       const validation = validateScopes(scopes, currentUser);
@@ -202,6 +215,11 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       };
       if ('duration_seconds' in req.body) {
         issueBody.duration_seconds = duration_seconds ?? null;
+      }
+      // Declared purpose is forwarded verbatim when provided; the key is
+      // OMITTED when absent (the hosted mint treats absence as "none declared").
+      if (purpose !== undefined && purpose !== null) {
+        issueBody.purpose = purpose;
       }
       const { status, data } = await callHostedService(`/api/v1/apps/${config.app_id}/token`, issueBody);
 
