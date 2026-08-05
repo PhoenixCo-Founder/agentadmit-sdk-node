@@ -237,6 +237,10 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         scopes,
         role,
         agent_label: label,
+        // Declared purpose is persisted locally so GET /connections (served
+        // from this store) can surface it. Explicit null is normalized to
+        // undefined — same "none declared" treatment as the hosted mint body.
+        purpose: purpose ?? undefined,
         duration_seconds: 'duration_seconds' in req.body ? duration_seconds ?? null : null,
         status: 'active',
       });
