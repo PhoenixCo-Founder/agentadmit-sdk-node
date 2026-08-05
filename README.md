@@ -296,6 +296,29 @@ single-use (checking alone lets it be replayed). Returning nothing allows the
 mint; returning any value fails closed with a `500` so a misconfigured hook
 that returns a denial object instead of throwing can never let the mint proceed.
 
+## Declared Purpose
+
+Declared purpose: the user-facing reason recorded on the grant at the consent moment. Review-time record only, never an enforcement input; authorization decisions ride scopes, connection status, and consent.
+
+Pass an optional `purpose` (1–300 characters) when generating a connection token; the SDK forwards it to the hosted mint, which records it on the grant:
+
+```typescript
+// POST /agentadmit/connections/generate-token
+{ "scopes": ["read:things"], "purpose": "Reconcile July invoices" }
+```
+
+The verify response reports it back on every introspection, and it rides into your middleware context as `req.agentAdmit.purpose` — `undefined` when no purpose was declared:
+
+```typescript
+app.get('/api/invoices', requireScope('read:invoices'), (req, res) => {
+  const ctx = (req as any).agentAdmit;
+  // Show it in your own audit views or connection lists:
+  console.log(`Access under declared purpose: ${ctx.purpose ?? '(none declared)'}`);
+});
+```
+
+Do not branch authorization on `purpose` — it is a record for humans reviewing a grant, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs.
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:

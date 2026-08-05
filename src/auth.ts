@@ -42,6 +42,13 @@ export interface AgentContext {
   consent?: ConsentVerdict;
   /** Human-presence fact for the connection, when the platform returns it. */
   presence?: PresenceInfo;
+  /**
+   * Declared purpose: the user-facing reason recorded on the grant at the
+   * consent moment. Review-time record only, never an enforcement input;
+   * authorization decisions ride scopes, connection status, and consent.
+   * Absent when no purpose was declared.
+   */
+  purpose?: string;
 }
 
 /**
@@ -92,6 +99,14 @@ export interface VerifyActive {
   consent?: ConsentVerdict;
   /** Human-presence fact for the connection. Additive; may be absent. */
   presence?: PresenceInfo;
+  /**
+   * Declared purpose: the user-facing reason recorded on the grant at the
+   * consent moment. Review-time record only, never an enforcement input;
+   * authorization decisions ride scopes, connection status, and consent.
+   * Nullable on the wire — `null` when no purpose was declared. Additive;
+   * absent on older servers.
+   */
+  purpose?: string | null;
 }
 
 /** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
@@ -322,12 +337,18 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
       ? (data.presence as PresenceInfo)
       : undefined;
 
+  // Declared purpose rides along when the grant carries one. Wire value is
+  // nullable (null = none declared); only a real string reaches the context.
+  // Review-time record only — never consulted for any decision in this SDK.
+  const purpose = typeof data.purpose === 'string' ? data.purpose : undefined;
+
   return {
     user,
     connection,
     scopes,
     ...(consent !== undefined ? { consent } : {}),
     ...(presence !== undefined ? { presence } : {}),
+    ...(purpose !== undefined ? { purpose } : {}),
   };
 }
 
