@@ -1,6 +1,6 @@
 {
   "name": "@agentadmit/sdk",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "AgentAdmit SDK: user-mediated AI agent authorization for Node.js apps",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
