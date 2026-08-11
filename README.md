@@ -319,6 +319,31 @@ app.get('/api/invoices', requireScope('read:invoices'), (req, res) => {
 
 Do not branch authorization on `purpose` — it is a record for humans reviewing a grant, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs.
 
+## User-Declared Intent
+
+User-declared intent: the user's own words for what they want the agent to do, typed at the consent moment. Where `purpose` records the app's words — the app's declared reason for the grant — `user_intent` records the user's own words. Review-time record only, never an enforcement input; authorization decisions ride scopes, connection status, and consent.
+
+Pass an optional `user_intent` (1–300 characters) when generating a connection token; the SDK forwards it to the hosted mint, which records it on the grant:
+
+```typescript
+// POST /agentadmit/connections/generate-token
+{ "scopes": ["read:things"], "user_intent": "Find me the cheapest flight to Lisbon in October" }
+```
+
+It flows identically to `purpose`: recorded on the grant, reported back on verify, carried on audit rows and ledger events. When the hosted presence ceremony runs, the intent is included in the verifiable-consent-evidence commitment, so the user's authenticator signs their own words alongside the rest of the consent evidence.
+
+The verify response reports it back on every introspection, and it rides into your middleware context as `req.agentAdmit.user_intent` — `undefined` when no intent was declared:
+
+```typescript
+app.get('/api/flights', requireScope('read:flights'), (req, res) => {
+  const ctx = (req as any).agentAdmit;
+  // Show it in your own audit views or connection lists:
+  console.log(`Access under user-declared intent: ${ctx.user_intent ?? '(none declared)'}`);
+});
+```
+
+Do not branch authorization on `user_intent` — it is a record for humans reviewing a grant, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs.
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:

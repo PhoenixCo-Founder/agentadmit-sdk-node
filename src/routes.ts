@@ -156,7 +156,7 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       const currentUser = await getCurrentUser(req);
       if (!currentUser) return res.status(401).json({ error: 'unauthorized' });
 
-      const { scopes, duration_seconds, label, purpose } = req.body;
+      const { scopes, duration_seconds, label, purpose, user_intent } = req.body;
       if (!scopes || !Array.isArray(scopes)) {
         return res.status(400).json({ error: 'invalid_request', error_description: 'scopes array required' });
       }
@@ -170,6 +170,21 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
           return res.status(400).json({
             error: 'invalid_request',
             error_description: 'purpose must be a string of 1 to 300 characters',
+          });
+        }
+      }
+
+      // User-declared intent: the user's own words for what they want the
+      // agent to do, typed at the consent moment. Distinct from `purpose`
+      // (the app's declared reason). Review-time record only, never an
+      // enforcement input; authorization decisions ride scopes, connection
+      // status, and consent. Optional (1..300 chars). Absent/null → the key
+      // is omitted downstream.
+      if (user_intent !== undefined && user_intent !== null) {
+        if (typeof user_intent !== 'string' || user_intent.length < 1 || user_intent.length > 300) {
+          return res.status(400).json({
+            error: 'invalid_request',
+            error_description: 'user_intent must be a string of 1 to 300 characters',
           });
         }
       }
@@ -221,6 +236,11 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       if (purpose !== undefined && purpose !== null) {
         issueBody.purpose = purpose;
       }
+      // User-declared intent is forwarded verbatim when provided; the key is
+      // OMITTED when absent (the hosted mint treats absence as "none declared").
+      if (user_intent !== undefined && user_intent !== null) {
+        issueBody.user_intent = user_intent;
+      }
       const { status, data } = await callHostedService(`/api/v1/apps/${config.app_id}/token`, issueBody);
 
       if (status !== 200 && status !== 201) {
@@ -241,6 +261,9 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         // from this store) can surface it. Explicit null is normalized to
         // undefined — same "none declared" treatment as the hosted mint body.
         purpose: purpose ?? undefined,
+        // User-declared intent is persisted locally for the same reason;
+        // explicit null gets the same "none declared" normalization.
+        user_intent: user_intent ?? undefined,
         duration_seconds: 'duration_seconds' in req.body ? duration_seconds ?? null : null,
         status: 'active',
       });
