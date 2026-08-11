@@ -49,6 +49,14 @@ export interface AgentContext {
    * Absent when no purpose was declared.
    */
   purpose?: string;
+  /**
+   * User-declared intent: the user's own words for what they want the agent
+   * to do, typed at the consent moment. Distinct from `purpose` (the app's
+   * declared reason). Review-time record only, never an enforcement input;
+   * authorization decisions ride scopes, connection status, and consent.
+   * Absent when no intent was declared.
+   */
+  user_intent?: string;
 }
 
 /**
@@ -107,6 +115,15 @@ export interface VerifyActive {
    * absent on older servers.
    */
   purpose?: string | null;
+  /**
+   * User-declared intent: the user's own words for what they want the agent
+   * to do, typed at the consent moment. Distinct from `purpose` (the app's
+   * declared reason). Review-time record only, never an enforcement input;
+   * authorization decisions ride scopes, connection status, and consent.
+   * Nullable on the wire — `null` when no intent was declared. Additive;
+   * absent on older servers.
+   */
+  user_intent?: string | null;
 }
 
 /** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
@@ -342,6 +359,11 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
   // Review-time record only — never consulted for any decision in this SDK.
   const purpose = typeof data.purpose === 'string' ? data.purpose : undefined;
 
+  // User-declared intent rides along the same way: the wire value is
+  // nullable (null = none declared); only a real string reaches the context.
+  // Review-time record only — never consulted for any decision in this SDK.
+  const userIntent = typeof data.user_intent === 'string' ? data.user_intent : undefined;
+
   return {
     user,
     connection,
@@ -349,6 +371,7 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
     ...(consent !== undefined ? { consent } : {}),
     ...(presence !== undefined ? { presence } : {}),
     ...(purpose !== undefined ? { purpose } : {}),
+    ...(userIntent !== undefined ? { user_intent: userIntent } : {}),
   };
 }
 
