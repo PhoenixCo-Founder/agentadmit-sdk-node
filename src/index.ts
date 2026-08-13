@@ -43,6 +43,9 @@ export type { VerifyWebhookSignatureOptions } from './webhooks';
 export { createAgentAdmitRouter } from './routes';
 export type { RouterOptions } from './routes';
 
+export { AppAttestedPresence } from './appAttestedPresence';
+export type { AppAttestedPresenceWire } from './appAttestedPresence';
+
 export { RateLimitError } from './errors';
 
 export {
