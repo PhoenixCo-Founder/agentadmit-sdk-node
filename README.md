@@ -293,8 +293,58 @@ hook is configured, existing apps keep the previous behavior.
 **Throw to deny.** The hook must `throw` to deny (attach `statusCode`/`detail`
 for a custom response), and must *verify and consume* the attestation
 single-use (checking alone lets it be replayed). Returning nothing allows the
-mint; returning any value fails closed with a `500` so a misconfigured hook
-that returns a denial object instead of throwing can never let the mint proceed.
+mint; returning an `AppAttestedPresence` allows the mint and forwards the
+ceremony fact (below); returning any other value fails closed with a `500` so
+a misconfigured hook that returns a denial object instead of throwing can
+never let the mint proceed.
+
+### App-Attested Presence (forward the ceremony fact)
+
+Your ceremony is origin-bound, so AgentAdmit never witnesses it: by default
+the hosted service reports `presence.verified: false` for connections your
+hook gated, even though a real passkey ceremony happened. To close that gap,
+return an `AppAttestedPresence` from the hook after verifying and consuming
+your attestation:
+
+```typescript
+import { AppAttestedPresence } from '@agentadmit/sdk';
+
+requireTokenMintPresence: async (req, currentUser) => {
+  const attestation = await verifyAndConsumePasskeyAttestation({
+    userId: currentUser.user_id,
+    attestationId: req.body?.presence_attestation_id,
+    purpose: 'token_mint',
+  });
+  if (!attestation) {
+    const err: any = new Error('Confirm human presence before generating a connection token');
+    err.statusCode = 403;
+    err.detail = { error: 'presence_attestation_required' };
+    throw err;
+  }
+  return new AppAttestedPresence({
+    method: 'my_webauthn',              // lowercase alphanumeric/underscore
+    verifiedAt: attestation.createdAt,  // Date, or ISO string WITH offset
+  });
+},
+```
+
+The SDK forwards it to the hosted mint as
+`presence: {verified: true, uv: true, method, verified_at}`. The hosted
+service validates freshness (10-minute window, 60 s future clock-skew slack)
+and stores the method provenance-marked `app:<method>` so app-attested facts
+stay distinct from ceremonies AgentAdmit witnessed itself. Introspection, the
+grant-event ledger, and the evidence API then carry `presence.verified: true`
+for the connection, and the local record behind `GET /connections` carries
+the same `presence` object.
+
+Honesty ceiling: this is *your app's attestation*, recorded and
+provenance-marked. It is not witnessed by AgentAdmit and not independently
+verifiable. Only construct one for a ceremony that verified the user with UV
+(biometric or PIN user verification); `verified`/`uv` are literal `true`. A
+ceremony without UV carries no presence fact, so return nothing instead.
+Pass `verifiedAt` as a `Date` (serialized safely) or an ISO-8601 string with
+an explicit offset; offset-less strings are rejected at construction because
+the hosted mint rejects them.
 
 ## Declared Purpose
 

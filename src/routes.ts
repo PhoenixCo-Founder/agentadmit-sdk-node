@@ -10,6 +10,7 @@
 import type { Router, Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { getConfig, getScopeMetadata, getDurationOptions } from './config';
+import { AppAttestedPresence } from './appAttestedPresence';
 import { StorageBackend } from './storage';
 import { checkConnectionCap } from './auth';
 
@@ -48,7 +49,16 @@ export interface RouterOptions {
   getUserTier?: (user: Record<string, any>) => string;
   validateScopes?: (scopes: string[], user: Record<string, any>) => { valid: boolean; invalid: string[] };
   getEndpointsForScopes?: (scopes: string[]) => Record<string, any>[];
-  requireTokenMintPresence?: (req: Request, currentUser: Record<string, any>) => Promise<void> | void;
+  /**
+   * Presence gate (consume-before-mint). Throw to deny. Return nothing to
+   * allow. Return an AppAttestedPresence to allow AND forward the consumed
+   * ceremony's fact to the hosted mint (stored provenance-marked
+   * `app:<method>`). Any other return value fails closed (500, no mint).
+   */
+  requireTokenMintPresence?: (
+    req: Request,
+    currentUser: Record<string, any>,
+  ) => Promise<void | AppAttestedPresence> | void | AppAttestedPresence;
 }
 
 /**
@@ -200,18 +210,23 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
 
       await checkConnectionCap(userId, userTier);
 
+      let presenceFact: AppAttestedPresence | undefined;
       if (options.requireTokenMintPresence) {
         try {
           const result = await options.requireTokenMintPresence(req, currentUser);
           // Contract: the hook THROWS to deny; returning nothing allows the
-          // mint. A returned value is a contract violation — fail CLOSED so a
-          // misconfigured hook that returns a "denial" object instead of
-          // throwing can never silently let the mint proceed (fail-open).
-          if (result !== undefined && result !== null) {
+          // mint; returning an AppAttestedPresence allows the mint AND
+          // forwards the consumed ceremony's fact to the hosted service.
+          // Any OTHER returned value is a contract violation — fail CLOSED
+          // so a misconfigured hook that returns a "denial" object instead
+          // of throwing can never silently let the mint proceed (fail-open).
+          if (result instanceof AppAttestedPresence) {
+            presenceFact = result;
+          } else if (result !== undefined && result !== null) {
             return res.status(500).json({
               error: 'presence_hook_misconfigured',
               error_description:
-                'The token-mint presence hook must throw to deny; it must not return a value.',
+                'The token-mint presence hook must throw to deny; it may only return nothing or an AppAttestedPresence.',
             });
           }
         } catch (err: any) {
@@ -241,6 +256,12 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       if (user_intent !== undefined && user_intent !== null) {
         issueBody.user_intent = user_intent;
       }
+      // App-attested presence: the hook verified and consumed the app's own
+      // ceremony attestation and returned the fact. Forwarded typed —
+      // verified/uv literal true, verified_at offset-carrying by construction.
+      if (presenceFact) {
+        issueBody.presence = presenceFact.toWire();
+      }
       const { status, data } = await callHostedService(`/api/v1/apps/${config.app_id}/token`, issueBody);
 
       if (status !== 200 && status !== 201) {
@@ -264,6 +285,9 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
         // User-declared intent is persisted locally for the same reason;
         // explicit null gets the same "none declared" normalization.
         user_intent: user_intent ?? undefined,
+        // App-attested presence fact is persisted locally so GET
+        // /connections can surface it; undefined when no fact was forwarded.
+        presence: presenceFact ? presenceFact.toWire() : undefined,
         duration_seconds: 'duration_seconds' in req.body ? duration_seconds ?? null : null,
         status: 'active',
       });
