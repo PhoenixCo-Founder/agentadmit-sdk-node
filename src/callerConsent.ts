@@ -137,13 +137,12 @@ export function callerConsent(options: CallerConsentOptions = {}): RequestHandle
       const token = getBearerToken(req) as string;
       let ctx;
       try {
-        // Telemetry deliberately EXCLUDES scope_used here: sending it would
-        // make the hosted service evaluate scope before this middleware's
-        // consent-first gate runs, leaking scope state and step-up guidance
-        // to callers whose class the owner denied (the v1.5.1 A5 ordering
-        // fix). Endpoint/method still ride for the audit log; the scope
-        // check stays local, after consent.
-        ctx = await validateAgentToken(token, requestTelemetry(req));
+        // Declare the exact exercised scope in the same hosted round trip,
+        // with consent_first guaranteeing that a denied caller class cannot
+        // learn scope state before this middleware returns its consent 403.
+        const telemetry = requestTelemetry(req, options.requiredScope) ?? {};
+        telemetry.consent_first = true;
+        ctx = await validateAgentToken(token, telemetry);
       } catch (err: any) {
         if (err instanceof VerifyRefusedError) {
           return res.status(403).json(err.payload);

@@ -188,10 +188,11 @@ async function introspectWithRetry(
   // Per-call audit telemetry (1.10.0): the exercised scope and the inbound
   // endpoint/method ride the verify call so the hosted audit log records
   // what THIS call did — omitted entirely when unknown, never null.
-  const body: Record<string, string> = { token };
+  const body: Record<string, string | boolean> = { token };
   if (telemetry?.scope_used) body.scope_used = telemetry.scope_used;
   if (telemetry?.endpoint) body.endpoint = telemetry.endpoint;
   if (telemetry?.method) body.method = telemetry.method;
+  if (telemetry?.consent_first) body.consent_first = true;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response: globalThis.Response;
@@ -267,6 +268,8 @@ export interface VerifyTelemetry {
   endpoint?: string;
   /** Uppercase HTTP method. */
   method?: string;
+  /** Resolve caller-class consent before hosted scope evaluation. */
+  consent_first?: boolean;
 }
 
 // Hosted BodySchema caps (verify route): endpoint ≤500, method ≤20.
