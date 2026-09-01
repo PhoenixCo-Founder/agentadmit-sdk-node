@@ -39,7 +39,8 @@
 
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { getConfig } from './config';
-import { validateAgentToken } from './auth';
+import { VerifyRefusedError } from './errors';
+import { requestTelemetry, validateAgentToken } from './auth';
 import { checkConsent, CallerClass } from './consent';
 
 /** The two token-less classes an app distinguishes from its own credentials. */
@@ -136,8 +137,17 @@ export function callerConsent(options: CallerConsentOptions = {}): RequestHandle
       const token = getBearerToken(req) as string;
       let ctx;
       try {
-        ctx = await validateAgentToken(token);
+        // Telemetry deliberately EXCLUDES scope_used here: sending it would
+        // make the hosted service evaluate scope before this middleware's
+        // consent-first gate runs, leaking scope state and step-up guidance
+        // to callers whose class the owner denied (the v1.5.1 A5 ordering
+        // fix). Endpoint/method still ride for the audit log; the scope
+        // check stays local, after consent.
+        ctx = await validateAgentToken(token, requestTelemetry(req));
       } catch (err: any) {
+        if (err instanceof VerifyRefusedError) {
+          return res.status(403).json(err.payload);
+        }
         return res.status(401).json({ error: 'invalid_token', error_description: err.message });
       }
 

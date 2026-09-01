@@ -120,6 +120,31 @@ The token goes to the human, not the agent. No automated delivery = no prompt in
 
 **In-app AI scopes.** If your app has built-in AI features (analysis, plan generation, photo recognition), do not expose those as agent scopes. The user's AI agent can read the raw data and do the analysis itself. Exposing in-app AI endpoints to agents creates double cost.
 
+## Per-Call Audit Telemetry
+
+Since 1.10.0, every verification call reports what the call actually did, so the
+app's tamper-evident audit log on the AgentAdmit hosted service records per-call
+usage instead of just token validity:
+
+- `scope_used` - the scope the route enforces, sent automatically by
+  `requireScope` and `requireScopeIfAgent`.
+- `endpoint` - the inbound request path (path only; the query string is never
+  sent).
+- `method` - the HTTP method.
+
+No integration changes are needed: the middlewares you already use collect
+these automatically. Calls verified without a scope-enforcing middleware
+(`resolveAuth`, `requirePresence`, or a bare `validateAgentToken`) still send
+endpoint and method, and the hosted audit log honestly records that no
+exercised scope was declared. Direct `validateAgentToken(token, telemetry)`
+callers can pass a `VerifyTelemetry` object themselves.
+
+The SDK also fails closed on per-call refusals: when the hosted service answers
+that the token is valid but THIS call is refused (`insufficient_scope`,
+`bound_exceeded` when a user-set usage ceiling is reached, or any future
+refusal class), the middleware returns 403 (`VerifyRefusedError` for direct
+callers) and never invokes your route handler.
+
 ## Rate Limiting
 
 The AgentAdmit introspection endpoint enforces rate limits. The Node.js SDK handles HTTP 429 responses **automatically** with exponential backoff and jitter - no changes needed in your middleware code.

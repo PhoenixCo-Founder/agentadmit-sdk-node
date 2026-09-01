@@ -48,3 +48,26 @@ export class RateLimitError extends Error {
     this.reset = options.reset ?? null;
   }
 }
+
+/**
+ * The hosted service answered active=true but refused THIS call.
+ *
+ * Thrown when an introspection response carries an `error` field on an
+ * active token (`insufficient_scope`, `bound_exceeded`, or a future
+ * refusal class). The token is valid; this specific call must be denied
+ * with HTTP 403 and `payload` as the response body. Never a 401
+ * invalid-token condition.
+ */
+export class VerifyRefusedError extends Error {
+  /** The refusal code from the hosted response (e.g. "bound_exceeded"). */
+  readonly code: string;
+  /** The 403 response body to surface to the caller. */
+  readonly payload: Record<string, unknown>;
+
+  constructor(code: string, payload: Record<string, unknown>) {
+    super(`Call refused by the authorization service: ${code}`);
+    this.name = 'VerifyRefusedError';
+    this.code = code;
+    this.payload = payload;
+  }
+}
