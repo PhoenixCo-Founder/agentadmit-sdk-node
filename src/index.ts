@@ -23,7 +23,7 @@ export {
   setUserVerifier,
   VERIFY_ERROR_CODES,
 } from './auth';
-export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, PresenceInfo } from './auth';
+export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, PresenceInfo, VerifyTelemetry } from './auth';
 
 export { checkConsent, CALLER_CLASSES } from './consent';
 export type { CallerClass, ConsentVerdict, ConsentSource, CheckConsentOptions } from './consent';
@@ -46,7 +46,7 @@ export type { RouterOptions } from './routes';
 export { AppAttestedPresence } from './appAttestedPresence';
 export type { AppAttestedPresenceWire } from './appAttestedPresence';
 
-export { RateLimitError } from './errors';
+export { RateLimitError, VerifyRefusedError } from './errors';
 
 export {
   configureAlerts,

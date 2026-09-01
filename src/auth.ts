@@ -8,7 +8,7 @@ import jwt from 'jsonwebtoken';
 import { getConfig } from './config';
 import { loadPublicKey } from './keys';
 import { StorageBackend } from './storage';
-import { RateLimitError } from './errors';
+import { RateLimitError, VerifyRefusedError } from './errors';
 import type { ConsentVerdict } from './consent';
 
 let _storage: StorageBackend | null = null;
@@ -180,9 +180,18 @@ async function introspectWithRetry(
   appId: string,
   apiKey: string,
   maxRetries: number,
+  telemetry?: VerifyTelemetry,
 ): Promise<globalThis.Response> {
   let delay = 1000; // ms
   let waitedMs = 0; // cumulative wait across retries
+
+  // Per-call audit telemetry (1.10.0): the exercised scope and the inbound
+  // endpoint/method ride the verify call so the hosted audit log records
+  // what THIS call did — omitted entirely when unknown, never null.
+  const body: Record<string, string> = { token };
+  if (telemetry?.scope_used) body.scope_used = telemetry.scope_used;
+  if (telemetry?.endpoint) body.endpoint = telemetry.endpoint;
+  if (telemetry?.method) body.method = telemetry.method;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response: globalThis.Response;
@@ -193,7 +202,7 @@ async function introspectWithRetry(
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify(body),
       });
     } catch (err: any) {
       throw new Error(`AgentAdmit introspection failed (network): ${err.message}`);
@@ -250,10 +259,81 @@ async function introspectWithRetry(
 
 // ---------------------------------------------------------------------------
 
+/** Per-call audit telemetry riding the verify request body (1.10.0). */
+export interface VerifyTelemetry {
+  /** The single scope the integration point enforces for this call. */
+  scope_used?: string;
+  /** Inbound request path — path only, query string never included. */
+  endpoint?: string;
+  /** Uppercase HTTP method. */
+  method?: string;
+}
+
+// Hosted BodySchema caps (verify route): endpoint ≤500, method ≤20.
+const ENDPOINT_MAX = 500;
+const METHOD_MAX = 20;
+
+/** Build telemetry from an Express request (+ optional enforced scope). */
+export function requestTelemetry(req: Request | undefined, scope?: string): VerifyTelemetry | undefined {
+  if (!req && !scope) return undefined;
+  const telemetry: VerifyTelemetry = {};
+  if (scope) telemetry.scope_used = scope;
+  if (req) {
+    // Express req.path excludes the query string by contract — the audit
+    // log must never receive query params (they can carry PII).
+    const path = typeof req.path === 'string' && req.path ? req.path : undefined;
+    if (path) telemetry.endpoint = path.slice(0, ENDPOINT_MAX);
+    const method = typeof req.method === 'string' && req.method ? req.method.toUpperCase() : undefined;
+    if (method) telemetry.method = method.slice(0, METHOD_MAX);
+  }
+  return telemetry;
+}
+
+/**
+ * 403 payload for an active-but-refused introspection response, else null.
+ *
+ * An `error` field on an `active: true` response is a per-call DENIAL
+ * (insufficient_scope, bound_exceeded, or a future refusal class) —
+ * never a pass-through.
+ */
+function activeRefusalPayload(
+  data: Record<string, any>,
+  scopeUsed?: string,
+): Record<string, unknown> | null {
+  const error = data.error;
+  if (typeof error !== 'string' || !error) return null;
+  if (error === 'insufficient_scope') {
+    return {
+      error: 'insufficient_scope',
+      required_scope: scopeUsed ?? null,
+      granted_scopes: data.granted_scopes ?? data.scopes ?? [],
+    };
+  }
+  if (error === 'bound_exceeded') {
+    const payload: Record<string, unknown> = {
+      error: 'bound_exceeded',
+      error_description:
+        data.error_description ??
+        'A usage ceiling the user set for this connection has been reached.',
+    };
+    if (data.bound && typeof data.bound === 'object') payload.bound = data.bound;
+    if (typeof data.renewal === 'string') payload.renewal = data.renewal;
+    return payload;
+  }
+  // Unknown refusal class: fail closed (forward-compatible).
+  return { error, error_description: 'Call refused by the authorization service.' };
+}
+
 /**
  * Validate an ag_at_ token and return the agent context.
+ *
+ * `telemetry` (1.10.0) rides the verify call so the hosted audit log
+ * records the exercised scope, endpoint, and method for THIS call.
  */
-export async function validateAgentToken(token: string): Promise<Omit<AgentContext, 'auth_type'>> {
+export async function validateAgentToken(
+  token: string,
+  telemetry?: VerifyTelemetry,
+): Promise<Omit<AgentContext, 'auth_type'>> {
   const config = getConfig();
 
   if (!token.startsWith(config.token_prefix_access)) {
@@ -269,7 +349,7 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
 
   // introspectWithRetry handles 429 with exponential backoff + jitter.
   // RateLimitError propagates to the caller when retries are exhausted.
-  const response = await introspectWithRetry(verifyUrl, token, appId, apiKey, maxRetries);
+  const response = await introspectWithRetry(verifyUrl, token, appId, apiKey, maxRetries, telemetry);
 
   // Non-2xx response: treat token as invalid regardless of body content.
   // 401 gets a more descriptive message if the body cooperates.
@@ -295,6 +375,16 @@ export async function validateAgentToken(token: string): Promise<Omit<AgentConte
   if (data.active !== true) {
     const reason = (typeof data.error === 'string' ? data.error : null) || 'invalid_token';
     throw new Error(`Token is not active: ${reason}`);
+  }
+
+  // Active-but-refused (1.10.0, fail-closed): an error field on an active
+  // response means the hosted service refused THIS call (insufficient_scope,
+  // bound_exceeded, or a future refusal class). The token stays valid; the
+  // call is denied 403. Checked before field validation — refusal responses
+  // deliberately omit identity fields.
+  const refusal = activeRefusalPayload(data, telemetry?.scope_used);
+  if (refusal !== null) {
+    throw new VerifyRefusedError(refusal.error as string, refusal);
   }
 
   // Validate identity fields — wrong types are treated as invalid rather than
@@ -400,7 +490,7 @@ export function requirePresence() {
     }
 
     try {
-      const ctx = await validateAgentToken(token);
+      const ctx = await validateAgentToken(token, requestTelemetry(req));
       if (!presenceVerified(ctx)) {
         return res.status(403).json({
           error: 'presence_required',
@@ -411,6 +501,9 @@ export function requirePresence() {
       (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
       next();
     } catch (err: any) {
+      if (err instanceof VerifyRefusedError) {
+        return res.status(403).json(err.payload);
+      }
       return res.status(401).json({ error: 'invalid_token', error_description: err.message });
     }
   };
@@ -429,7 +522,10 @@ export function requireScope(scope: string) {
     }
 
     try {
-      const ctx = await validateAgentToken(token);
+      // The verify call carries scope_used (1.10.0 telemetry) — the hosted
+      // service records the exercised scope and refuses ungranted ones
+      // itself; the local check below stays as defense in depth.
+      const ctx = await validateAgentToken(token, requestTelemetry(req, scope));
       if (!ctx.scopes.includes(scope)) {
         return res.status(403).json({
           error: 'insufficient_scope',
@@ -442,6 +538,9 @@ export function requireScope(scope: string) {
       (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
       next();
     } catch (err: any) {
+      if (err instanceof VerifyRefusedError) {
+        return res.status(403).json(err.payload);
+      }
       return res.status(401).json({ error: 'invalid_token', error_description: err.message });
     }
   };
@@ -460,7 +559,7 @@ export function requireScopeIfAgent(scope: string) {
     }
 
     try {
-      const ctx = await validateAgentToken(token);
+      const ctx = await validateAgentToken(token, requestTelemetry(req, scope));
       if (!ctx.scopes.includes(scope)) {
         return res.status(403).json({
           error: 'insufficient_scope',
@@ -473,6 +572,9 @@ export function requireScopeIfAgent(scope: string) {
       (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
       next();
     } catch (err: any) {
+      if (err instanceof VerifyRefusedError) {
+        return res.status(403).json(err.payload);
+      }
       return res.status(401).json({ error: 'invalid_token', error_description: err.message });
     }
   };
@@ -492,10 +594,13 @@ export function resolveAuth() {
 
     if (token.startsWith(config.token_prefix_access)) {
       try {
-        const ctx = await validateAgentToken(token);
+        const ctx = await validateAgentToken(token, requestTelemetry(req));
         (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
         return next();
       } catch (err: any) {
+        if (err instanceof VerifyRefusedError) {
+          return res.status(403).json(err.payload);
+        }
         return res.status(401).json({ error: 'invalid_token', error_description: err.message });
       }
     }
