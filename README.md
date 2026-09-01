@@ -139,6 +139,10 @@ endpoint and method, and the hosted audit log honestly records that no
 exercised scope was declared. Direct `validateAgentToken(token, telemetry)`
 callers can pass a `VerifyTelemetry` object themselves.
 
+`callerConsent({ requiredScope })` reports the same three fields and sets the
+hosted `consent_first` guard automatically, so a denied caller class cannot
+learn scope state before the middleware returns its consent 403.
+
 The SDK also fails closed on per-call refusals: when the hosted service answers
 that the token is valid but THIS call is refused (`insufficient_scope`,
 `bound_exceeded` when a user-set usage ceiling is reached, or any future

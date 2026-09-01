@@ -20,6 +20,7 @@ import {
   requestTelemetry,
 } from '../src/auth';
 import { VerifyRefusedError } from '../src/errors';
+import { callerConsent } from '../src/callerConsent';
 import { setStorage } from '../src/auth';
 import { MemoryStorage } from '../src/storage';
 
@@ -139,6 +140,28 @@ describe('1.10.0 verify telemetry + active-refusal fail-closed', () => {
       method: 'GET',
     } as any)!;
     expect(t.endpoint).toBe('/api/things');
+  });
+
+  test('callerConsent declares scope with hosted consent-first ordering', async () => {
+    const captured = mockFetchCapture(200, validBody({
+      consent: { caller_class: 'external_agent', granted: true, source: 'app_default' },
+    }));
+    const req = fakeReq('/api/records', 'get');
+    const res = fakeRes();
+    let nexted = false;
+    await callerConsent({ requiredScope: 'read:things' })(
+      req,
+      res,
+      (() => { nexted = true; }) as any,
+    );
+    expect(nexted).toBe(true);
+    expect(captured[0]).toEqual({
+      token: 'ag_at_tok',
+      scope_used: 'read:things',
+      endpoint: '/api/records',
+      method: 'GET',
+      consent_first: true,
+    });
   });
 
   // §4 — active-error fail-closed
