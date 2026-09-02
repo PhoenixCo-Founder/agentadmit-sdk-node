@@ -139,11 +139,18 @@ describe('retry telemetry', () => {
       request_digest: requestDigest(req),
       action_summary: 'Pay alex $50',
     });
-    await validateAgentToken('ag_at_x', telemetry);
+    const ctx = await validateAgentToken('ag_at_x', telemetry);
+    expect(ctx.action_confirmation).toEqual({ action_session_id: 'asess_abc', consumed: true });
     const sent = JSON.parse((fetchMock.mock.calls[0][1] as any).body);
     expect(sent.action_attestation_id).toBe('asess_abc');
     expect(sent.request_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(sent.action_summary).toBe('Pay alex $50');
+  });
+
+  it('never surfaces a malformed action_confirmation block', async () => {
+    mockFetch({ active: true, user_id: 'u1', connection_id: 'c1', scopes: ['write:payments'], action_confirmation: { action_session_id: 'asess_abc', consumed: 'yes' } });
+    const ctx = await validateAgentToken('ag_at_x', { scope_used: 'write:payments' });
+    expect(ctx.action_confirmation).toBeUndefined();
   });
 
   it('omits attestation, digest, and summary when absent', () => {

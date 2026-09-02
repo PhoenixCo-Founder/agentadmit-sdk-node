@@ -58,6 +58,19 @@ export interface AgentContext {
    * Absent when no intent was declared.
    */
   user_intent?: string;
+  /**
+   * Confirm-each-time (1.11.0): present only when THIS call was accepted
+   * because the hosted service consumed a human confirmation for exactly
+   * this action. Apps that run their own transaction step-up can treat this
+   * as that confirmation instead of asking the human twice.
+   */
+  action_confirmation?: ActionConfirmationConsumed;
+}
+
+/** The consumed confirmation reported on an accepted verify response. */
+export interface ActionConfirmationConsumed {
+  action_session_id: string;
+  consumed: true;
 }
 
 /**
@@ -581,6 +594,15 @@ export async function validateAgentToken(
   // Review-time record only — never consulted for any decision in this SDK.
   const userIntent = typeof data.user_intent === 'string' ? data.user_intent : undefined;
 
+  // Consumed confirm-each-time attestation (1.11.0). Strict: only a block
+  // with a string session id and consumed === true reaches the context.
+  const actionConfirmation: ActionConfirmationConsumed | undefined =
+    data.action_confirmation && typeof data.action_confirmation === 'object' &&
+    typeof data.action_confirmation.action_session_id === 'string' &&
+    data.action_confirmation.consumed === true
+      ? { action_session_id: data.action_confirmation.action_session_id, consumed: true }
+      : undefined;
+
   return {
     user,
     connection,
@@ -589,6 +611,7 @@ export async function validateAgentToken(
     ...(presence !== undefined ? { presence } : {}),
     ...(purpose !== undefined ? { purpose } : {}),
     ...(userIntent !== undefined ? { user_intent: userIntent } : {}),
+    ...(actionConfirmation !== undefined ? { action_confirmation: actionConfirmation } : {}),
   };
 }
 
