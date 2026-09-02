@@ -71,3 +71,40 @@ export class VerifyRefusedError extends Error {
     this.payload = payload;
   }
 }
+
+/**
+ * The hosted confirm-each-time ceremony staged for one exact action
+ * (`confirmation_required`, 1.11.0). The agent hands `action_session_url`
+ * to the human; only a user-verified passkey on that page produces an
+ * attestation. The agent then retries the same request with the
+ * `X-AgentAdmit-Action-Attestation: <action_session_id>` header.
+ */
+export interface ActionConfirmation {
+  action_session_id: string;
+  action_session_url: string;
+  expires_at: string;
+  scope: string;
+  method: string | null;
+  endpoint: string | null;
+  request_digest: string | null;
+  summary: string | null;
+}
+
+/**
+ * A `VerifyRefusedError` whose refusal is `confirmation_required`: the
+ * scope is granted, but this call needs a fresh human confirmation. The
+ * 403 payload (`payload`) already carries the `confirmation` block for the
+ * agent; `confirmation` is the same block, typed.
+ */
+export class ConfirmationRequiredError extends VerifyRefusedError {
+  readonly confirmation: ActionConfirmation;
+  /** Why a presented attestation was not accepted, when one was presented. */
+  readonly attestationStatus: string | null;
+
+  constructor(payload: Record<string, unknown>, confirmation: ActionConfirmation, attestationStatus: string | null) {
+    super('confirmation_required', payload);
+    this.name = 'ConfirmationRequiredError';
+    this.confirmation = confirmation;
+    this.attestationStatus = attestationStatus;
+  }
+}

@@ -8,7 +8,8 @@ import jwt from 'jsonwebtoken';
 import { getConfig } from './config';
 import { loadPublicKey } from './keys';
 import { StorageBackend } from './storage';
-import { RateLimitError, VerifyRefusedError } from './errors';
+import { createHash } from 'crypto';
+import { RateLimitError, VerifyRefusedError, ConfirmationRequiredError, type ActionConfirmation } from './errors';
 import type { ConsentVerdict } from './consent';
 
 let _storage: StorageBackend | null = null;
@@ -193,6 +194,9 @@ async function introspectWithRetry(
   if (telemetry?.endpoint) body.endpoint = telemetry.endpoint;
   if (telemetry?.method) body.method = telemetry.method;
   if (telemetry?.consent_first) body.consent_first = true;
+  if (telemetry?.action_attestation_id) body.action_attestation_id = telemetry.action_attestation_id;
+  if (telemetry?.request_digest) body.request_digest = telemetry.request_digest;
+  if (telemetry?.action_summary) body.action_summary = telemetry.action_summary;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let response: globalThis.Response;
@@ -270,14 +274,70 @@ export interface VerifyTelemetry {
   method?: string;
   /** Resolve caller-class consent before hosted scope evaluation. */
   consent_first?: boolean;
+  /**
+   * Confirm-each-time (1.11.0): the single-use attestation id from a
+   * completed hosted action ceremony, presented on the agent's retry via
+   * the `X-AgentAdmit-Action-Attestation` header.
+   */
+  action_attestation_id?: string;
+  /** `sha256:<hex>` over the request body, so the confirmation covers the
+   * exact payload, not just the route. */
+  request_digest?: string;
+  /** App-supplied plain-language description of the action shown to the
+   * human on the hosted page and committed into the signature. */
+  action_summary?: string;
 }
 
-// Hosted BodySchema caps (verify route): endpoint ≤500, method ≤20.
+// Hosted BodySchema caps (verify route): endpoint ≤500, method ≤20,
+// action_attestation_id ≤120, request_digest ≤128, action_summary ≤200.
 const ENDPOINT_MAX = 500;
 const METHOD_MAX = 20;
+const ATTESTATION_MAX = 120;
+const DIGEST_MAX = 128;
+const SUMMARY_MAX = 200;
+
+/** Request header an agent sets on its retry after the human confirmed. */
+export const ACTION_ATTESTATION_HEADER = 'x-agentadmit-action-attestation';
+
+/** Options for scope enforcement on a confirm-each-time route. */
+export interface ScopeOptions {
+  /**
+   * Plain-language description of THIS action for the human ("Pay Alex $50").
+   * A string, or a function of the request (return undefined to omit).
+   * Shown as the headline of the hosted confirmation page and committed
+   * into the passkey signature. AgentAdmit does not verify it against the
+   * request; it proves what the human was shown.
+   */
+  actionSummary?: string | ((req: Request) => string | undefined);
+}
+
+/**
+ * `sha256:<hex>` over the parsed JSON body. Deterministic for the same
+ * parsed body, which is what the agent's retry re-sends. Undefined when
+ * there is no object body (GET, empty, non-JSON).
+ */
+export function requestDigest(req: Request): string | undefined {
+  const body = (req as any).body;
+  if (body === undefined || body === null || typeof body !== 'object') return undefined;
+  if (Buffer.isBuffer(body)) {
+    return `sha256:${createHash('sha256').update(body).digest('hex')}`;
+  }
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(body);
+  } catch {
+    return undefined;
+  }
+  if (serialized === undefined) return undefined;
+  return `sha256:${createHash('sha256').update(serialized, 'utf8').digest('hex')}`;
+}
 
 /** Build telemetry from an Express request (+ optional enforced scope). */
-export function requestTelemetry(req: Request | undefined, scope?: string): VerifyTelemetry | undefined {
+export function requestTelemetry(
+  req: Request | undefined,
+  scope?: string,
+  options?: ScopeOptions,
+): VerifyTelemetry | undefined {
   if (!req && !scope) return undefined;
   const telemetry: VerifyTelemetry = {};
   if (scope) telemetry.scope_used = scope;
@@ -288,6 +348,26 @@ export function requestTelemetry(req: Request | undefined, scope?: string): Veri
     if (path) telemetry.endpoint = path.slice(0, ENDPOINT_MAX);
     const method = typeof req.method === 'string' && req.method ? req.method.toUpperCase() : undefined;
     if (method) telemetry.method = method.slice(0, METHOD_MAX);
+    // Confirm-each-time retry: the agent presents the attestation id it got
+    // from the confirmation_required refusal, after the human confirmed.
+    const rawAttestation = req.headers?.[ACTION_ATTESTATION_HEADER];
+    const attestation = Array.isArray(rawAttestation) ? rawAttestation[0] : rawAttestation;
+    if (typeof attestation === 'string' && attestation.trim()) {
+      telemetry.action_attestation_id = attestation.trim().slice(0, ATTESTATION_MAX);
+    }
+    const digest = requestDigest(req);
+    if (digest) telemetry.request_digest = digest.slice(0, DIGEST_MAX);
+    if (options?.actionSummary !== undefined) {
+      let summary: string | undefined;
+      try {
+        summary = typeof options.actionSummary === 'function' ? options.actionSummary(req) : options.actionSummary;
+      } catch {
+        summary = undefined;
+      }
+      if (typeof summary === 'string' && summary.trim()) {
+        telemetry.action_summary = summary.trim().slice(0, SUMMARY_MAX);
+      }
+    }
   }
   return telemetry;
 }
@@ -323,8 +403,45 @@ function activeRefusalPayload(
     if (typeof data.renewal === 'string') payload.renewal = data.renewal;
     return payload;
   }
+  if (error === 'confirmation_required') {
+    // Confirm-each-time (1.11.0): the scope is granted but THIS call needs a
+    // fresh human confirmation. Pass the staged ceremony through so the
+    // agent can hand the link to the human; nothing else from the wire.
+    const confirmation = parseActionConfirmation(data.confirmation);
+    const payload: Record<string, unknown> = {
+      error: 'confirmation_required',
+      error_description:
+        data.error_description ??
+        'This action requires a fresh human confirmation. Give the confirmation link to the user, then retry with the X-AgentAdmit-Action-Attestation header.',
+    };
+    if (confirmation) payload.confirmation = confirmation;
+    if (typeof data.attestation_status === 'string') payload.attestation_status = data.attestation_status;
+    if (typeof data.attestation_description === 'string') payload.attestation_description = data.attestation_description;
+    if (typeof data.renewal === 'string') payload.renewal = data.renewal;
+    return payload;
+  }
   // Unknown refusal class: fail closed (forward-compatible).
   return { error, error_description: 'Call refused by the authorization service.' };
+}
+
+/** Strictly typed copy of the wire `confirmation` block, or null. */
+export function parseActionConfirmation(raw: unknown): ActionConfirmation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.action_session_id !== 'string' || typeof c.action_session_url !== 'string' || typeof c.expires_at !== 'string' || typeof c.scope !== 'string') {
+    return null;
+  }
+  const nullableString = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+  return {
+    action_session_id: c.action_session_id,
+    action_session_url: c.action_session_url,
+    expires_at: c.expires_at,
+    scope: c.scope,
+    method: nullableString(c.method),
+    endpoint: nullableString(c.endpoint),
+    request_digest: nullableString(c.request_digest),
+    summary: nullableString(c.summary),
+  };
 }
 
 /**
@@ -387,6 +504,13 @@ export async function validateAgentToken(
   // deliberately omit identity fields.
   const refusal = activeRefusalPayload(data, telemetry?.scope_used);
   if (refusal !== null) {
+    if (refusal.error === 'confirmation_required' && refusal.confirmation) {
+      throw new ConfirmationRequiredError(
+        refusal,
+        refusal.confirmation as ActionConfirmation,
+        typeof refusal.attestation_status === 'string' ? refusal.attestation_status : null,
+      );
+    }
     throw new VerifyRefusedError(refusal.error as string, refusal);
   }
 
@@ -514,8 +638,13 @@ export function requirePresence() {
 
 /**
  * Express middleware: require a specific scope (agent-only).
+ *
+ * `options.actionSummary` (1.11.0) describes THIS action for the human when
+ * the scope is confirm-each-time; the hosted service refuses the first call
+ * with `confirmation_required` (403 to the agent, with the confirmation
+ * link) and accepts the retry that carries the attestation header.
  */
-export function requireScope(scope: string) {
+export function requireScope(scope: string, options?: ScopeOptions) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const token = getBearerToken(req);
     const config = getConfig();
@@ -528,7 +657,7 @@ export function requireScope(scope: string) {
       // The verify call carries scope_used (1.10.0 telemetry) — the hosted
       // service records the exercised scope and refuses ungranted ones
       // itself; the local check below stays as defense in depth.
-      const ctx = await validateAgentToken(token, requestTelemetry(req, scope));
+      const ctx = await validateAgentToken(token, requestTelemetry(req, scope, options));
       if (!ctx.scopes.includes(scope)) {
         return res.status(403).json({
           error: 'insufficient_scope',
@@ -552,7 +681,7 @@ export function requireScope(scope: string) {
 /**
  * Express middleware: enforce scope only if caller is an agent.
  */
-export function requireScopeIfAgent(scope: string) {
+export function requireScopeIfAgent(scope: string, options?: ScopeOptions) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const token = getBearerToken(req);
     const config = getConfig();
@@ -562,7 +691,7 @@ export function requireScopeIfAgent(scope: string) {
     }
 
     try {
-      const ctx = await validateAgentToken(token, requestTelemetry(req, scope));
+      const ctx = await validateAgentToken(token, requestTelemetry(req, scope, options));
       if (!ctx.scopes.includes(scope)) {
         return res.status(403).json({
           error: 'insufficient_scope',
