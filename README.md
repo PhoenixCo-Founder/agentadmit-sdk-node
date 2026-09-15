@@ -151,6 +151,90 @@ that the token is valid but THIS call is refused (`insufficient_scope`,
 refusal class), the middleware returns 403 (`VerifyRefusedError` for direct
 callers) and never invokes your route handler.
 
+## Confirm Each Time (Exercise-Time Human Confirmation)
+
+Some actions should never run on a standing grant alone: moving money, sending
+or publishing on the user's behalf, deleting data, touching production. Mark
+those scopes `confirm_each_time: true` when you register them, and the hosted
+service requires a fresh human confirmation for every call that exercises
+them, even inside a valid connection.
+
+In `agentadmit.yaml`:
+
+```yaml
+scopes:
+  - name: write:payments
+    description: Move money
+    category: Payments
+    role: user
+    confirm_each_time: true
+```
+
+The flag is typed on `ScopeDefinition` and round-trips unchanged to the
+`/scopes` endpoint the hosted service reads, so the registration your app
+publishes is the policy the hosted service enforces.
+
+How a call flows:
+
+1. The agent calls your route. The SDK verifies the token as usual, carrying
+   the exercised scope, a `sha256:` digest of the request body, and the
+   plain-language `actionSummary` you provide.
+2. The hosted service refuses the first call with `confirmation_required` and
+   stages a one-time ceremony for exactly that action. Your route returns 403
+   with a `confirmation` block; the agent gives `confirmation.action_session_url`
+   to the user.
+3. The user confirms on AgentAdmit's hosted page with their passkey. The
+   signature commits to the scope, method, endpoint, request digest, and the
+   summary they saw. Only a user-verified ceremony produces an attestation; the
+   agent cannot complete it.
+4. The agent retries the same request with the header
+   `X-AgentAdmit-Action-Attestation: <action_session_id>`. The SDK forwards it,
+   the hosted service consumes the attestation once (exact action only), and
+   the call proceeds. The audit row names the confirmation.
+
+```ts
+import { requireScope, ConfirmationRequiredError } from '@agentadmit/sdk';
+
+app.post(
+  '/api/payments',
+  requireScope('write:payments', {
+    actionSummary: (req) => `Pay ${req.body.trainer} $${req.body.amount}`,
+  }),
+  handler,
+);
+```
+
+The 403 body an agent receives on the first call:
+
+```json
+{
+  "error": "confirmation_required",
+  "error_description": "Scope \"write:payments\" requires a fresh human confirmation for each call. ...",
+  "confirmation": {
+    "action_session_id": "asess_...",
+    "action_session_url": "https://agentadmit.com/confirm/action/asess_...",
+    "expires_at": "2026-09-02T18:30:00.000Z",
+    "scope": "write:payments",
+    "method": "POST",
+    "endpoint": "/api/payments",
+    "request_digest": "sha256:...",
+    "summary": "Pay Alex $50"
+  }
+}
+```
+
+Notes:
+
+- The summary is yours. AgentAdmit shows it as the headline of the confirmation
+  page and commits to the text shown; it does not verify the description
+  against the request.
+- A confirmation covers exactly one call. A retry with a different body, route,
+  method, or summary is refused again with `attestation_status: "action_mismatch"`.
+- `validateAgentToken` throws `ConfirmationRequiredError` (a `VerifyRefusedError`)
+  with the typed `confirmation` block when you build your own middleware.
+- Confirmation only applies when the call declares the exercised scope, which
+  `requireScope` always does.
+
 ## Rate Limiting
 
 The AgentAdmit introspection endpoint enforces rate limits. The Node.js SDK handles HTTP 429 responses **automatically** with exponential backoff and jitter - no changes needed in your middleware code.

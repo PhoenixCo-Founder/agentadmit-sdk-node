@@ -17,6 +17,13 @@ export interface ScopeDefinition {
   description: string;
   category?: string;
   role?: string;
+  /**
+   * Confirm-each-time: when true, the hosted service requires a fresh human
+   * confirmation for every call that exercises this scope, even inside a
+   * valid connection (`confirmation_required` refusal on the first call).
+   * Round-trips from `agentadmit.yaml` to the published `/scopes` metadata.
+   */
+  confirm_each_time?: boolean;
 }
 
 export interface DurationOption {
