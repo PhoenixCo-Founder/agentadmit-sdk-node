@@ -159,6 +159,21 @@ those scopes `confirm_each_time: true` when you register them, and the hosted
 service requires a fresh human confirmation for every call that exercises
 them, even inside a valid connection.
 
+In `agentadmit.yaml`:
+
+```yaml
+scopes:
+  - name: write:payments
+    description: Move money
+    category: Payments
+    role: user
+    confirm_each_time: true
+```
+
+The flag is typed on `ScopeDefinition` and round-trips unchanged to the
+`/scopes` endpoint the hosted service reads, so the registration your app
+publishes is the policy the hosted service enforces.
+
 How a call flows:
 
 1. The agent calls your route. The SDK verifies the token as usual, carrying

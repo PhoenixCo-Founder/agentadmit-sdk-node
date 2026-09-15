@@ -20,6 +20,14 @@ import {
   ACTION_ATTESTATION_HEADER,
 } from '../src/auth';
 import { ConfirmationRequiredError, VerifyRefusedError } from '../src/errors';
+import { getScopeMetadata } from '../src/config';
+import { createAgentAdmitRouter } from '../src/routes';
+import express from 'express';
+import type { Server } from 'http';
+import type { AddressInfo } from 'net';
+
+// Captured before any test swaps global.fetch, so the route test can hit a real local server.
+const realFetch = global.fetch;
 
 function writeTestConfig(): string {
   const dir = mkdtempSync(join(tmpdir(), 'aa-confirm-test-'));
@@ -38,6 +46,11 @@ function writeTestConfig(): string {
     '  - name: write:payments',
     '    description: Move money',
     '    category: Payments',
+    '    role: user',
+    '    confirm_each_time: true',
+    '  - name: read:workouts',
+    '    description: Read workouts',
+    '    category: Workouts',
     '    role: user',
   ].join('\n'));
   return cfgPath;
@@ -180,5 +193,35 @@ describe('parseActionConfirmation', () => {
       action_session_id: 'a', action_session_url: 'u', expires_at: 'e', scope: 's',
       method: null, endpoint: null, request_digest: null, summary: null,
     });
+  });
+});
+
+describe('confirm_each_time scope flag', () => {
+  it('round-trips from agentadmit.yaml to the scope metadata', () => {
+    const byName = Object.fromEntries(getScopeMetadata().map((s) => [s.name, s]));
+    expect(byName['write:payments'].confirm_each_time).toBe(true);
+    expect(byName['read:workouts'].confirm_each_time).toBeUndefined();
+  });
+
+  it('is published on the /scopes endpoint the hosted service reads', async () => {
+    const { agentadmitRouter } = createAgentAdmitRouter({
+      storage: { storeConnection: jest.fn(), listConnections: jest.fn().mockResolvedValue([]) } as any,
+      getCurrentUser: async () => ({ user_id: 'u1' }),
+    });
+    const app = express();
+    app.use('/agentadmit', agentadmitRouter);
+    const server: Server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const res = await realFetch(`http://127.0.0.1:${port}/agentadmit/scopes`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { scopes: Array<Record<string, unknown>> };
+      const payments = body.scopes.find((s) => s.name === 'write:payments');
+      expect(payments?.confirm_each_time).toBe(true);
+      const workouts = body.scopes.find((s) => s.name === 'read:workouts');
+      expect(workouts).not.toHaveProperty('confirm_each_time');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
