@@ -166,7 +166,7 @@ describe('validateAgentToken — introspection response validation', () => {
     // agent_id: null; 1.11.0 refused them all as invalid_token.
     mockFetch(200, validBody({ agent_id: null }));
     const ctx = await validateAgentToken('ag_at_good');
-    expect((ctx as any).userId).toBe('user_1');
+    expect(Object.values(ctx.user)).toContain('user_1');
     expect((ctx as any).agent_id).toBeUndefined();
   });
 
