@@ -161,6 +161,24 @@ describe('validateAgentToken — introspection response validation', () => {
     await expect(validateAgentToken('ag_at_bad')).rejects.toThrow(/not active/);
   });
 
+  it('accepts agent_id null (the hosted service sends null for an unknown agent id)', async () => {
+    // Live finding, Sep 22 2026: hosted-consent and sandbox connections carry
+    // agent_id: null; 1.11.0 refused them all as invalid_token.
+    mockFetch(200, validBody({ agent_id: null }));
+    const ctx = await validateAgentToken('ag_at_good');
+    expect((ctx as any).userId).toBe('user_1');
+    expect((ctx as any).agent_id).toBeUndefined();
+  });
+
+  it('accepts null for every optional identity field, but user_id null still means no user', async () => {
+    mockFetch(200, validBody({ agent_id: null, sub: null, role: null, app_id: null, jti: null }));
+    await expect(validateAgentToken('ag_at_good')).resolves.toBeDefined();
+    mockFetch(200, validBody({ connection_id: null }));
+    await expect(validateAgentToken('ag_at_good')).resolves.toBeDefined();
+    mockFetch(200, validBody({ user_id: null }));
+    await expect(validateAgentToken('ag_at_bad')).rejects.toThrow(/no user/);
+  });
+
   it('accepts agent_id absent (optional field)', async () => {
     // Construct body without agent_id to confirm the optional field is allowed absent
     const body: Record<string, any> = {

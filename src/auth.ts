@@ -542,9 +542,14 @@ export async function validateAgentToken(
 
   const scopes: string[] = Array.isArray(scopesRaw) ? scopesRaw : [];
 
-  // Optional string identity fields: if present they must be strings.
+  // Optional string identity fields: if present they must be strings. The
+  // hosted service sends `null` for an identity it does not have (for
+  // example agent_id on hosted-consent and sandbox connections); null means
+  // absent, exactly like the other five SDKs treat it. Before 1.11.1 a null
+  // here was rejected as invalid_token, which refused every such connection.
   const stringFields = ['user_id', 'agent_id', 'connection_id', 'sub', 'role', 'app_id', 'jti'] as const;
   for (const field of stringFields) {
+    if (data[field] === null) data[field] = undefined;
     if (data[field] !== undefined && typeof data[field] !== 'string') {
       throw new Error('Token is not active: invalid_token');
     }
