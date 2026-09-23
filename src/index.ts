@@ -50,8 +50,8 @@ export type { RouterOptions } from './routes';
 export { AppAttestedPresence } from './appAttestedPresence';
 export type { AppAttestedPresenceWire } from './appAttestedPresence';
 
-export { RateLimitError, VerifyRefusedError, ConfirmationRequiredError } from './errors';
-export type { ActionConfirmation } from './errors';
+export { RateLimitError, VerifyRefusedError, ConfirmationRequiredError, ConfirmationDeclinedError } from './errors';
+export type { ActionConfirmation, ActionDecline } from './errors';
 
 export {
   configureAlerts,

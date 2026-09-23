@@ -17,9 +17,10 @@ import {
   requestTelemetry,
   requestDigest,
   parseActionConfirmation,
+  parseActionDecline,
   ACTION_ATTESTATION_HEADER,
 } from '../src/auth';
-import { ConfirmationRequiredError, VerifyRefusedError } from '../src/errors';
+import { ConfirmationRequiredError, ConfirmationDeclinedError, VerifyRefusedError } from '../src/errors';
 import { getScopeMetadata } from '../src/config';
 import { createAgentAdmitRouter } from '../src/routes';
 import express from 'express';
@@ -136,6 +137,87 @@ describe('confirmation_required refusal', () => {
   it('still fails closed on the policy-unavailable refusal', async () => {
     mockFetch({ active: true, error: 'confirmation_policy_unavailable' });
     await expect(validateAgentToken('ag_at_x', { scope_used: 'write:payments' })).rejects.toBeInstanceOf(VerifyRefusedError);
+  });
+});
+
+const DECLINED = {
+  action_session_id: 'asess_abc',
+  declined_at: '2026-09-22T21:35:42.000Z',
+  hold_until: '2026-09-22T21:50:42.000Z',
+  scope: 'write:payments',
+  method: 'POST',
+  endpoint: '/api/payments',
+  request_digest: 'sha256:deadbeef',
+  summary: 'Pay Alex $50',
+};
+
+describe('confirmation_declined refusal (1.12.0)', () => {
+  it('throws a typed ConfirmationDeclinedError carrying the declined block and hold', async () => {
+    mockFetch({
+      active: true,
+      error: 'confirmation_declined',
+      error_description: 'The user declined this action on the hosted confirmation page. Do not retry it unless the user asks you to; no new confirmation can be staged for this action until 2026-09-22T21:50:42.000Z.',
+      declined: DECLINED,
+      renewal: 'Only the user can lift a decline. After the hold ends, a retry stages a fresh confirmation for them to approve or decline again.',
+    });
+    await expect(validateAgentToken('ag_at_x', { scope_used: 'write:payments' })).rejects.toBeInstanceOf(ConfirmationDeclinedError);
+    try {
+      await validateAgentToken('ag_at_x', { scope_used: 'write:payments' });
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(VerifyRefusedError);
+      expect(err).not.toBeInstanceOf(ConfirmationRequiredError);
+      expect(err.code).toBe('confirmation_declined');
+      expect(err.declined).toEqual(DECLINED);
+      expect(err.payload.declined).toEqual(DECLINED);
+      expect(err.payload.error_description).toContain('declined');
+      expect(err.payload.renewal).toContain('Only the user');
+      expect(err.attestationStatus).toBeNull();
+      expect(err.payload.confirmation).toBeUndefined();
+    }
+  });
+
+  it('surfaces the attestation status when the agent retried with the declined session', async () => {
+    mockFetch({
+      active: true,
+      error: 'confirmation_declined',
+      declined: DECLINED,
+      attestation_status: 'declined',
+      attestation_description: 'The user declined this action.',
+    });
+    try {
+      await validateAgentToken('ag_at_x', { scope_used: 'write:payments', action_attestation_id: 'asess_abc' });
+      throw new Error('expected refusal');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(ConfirmationDeclinedError);
+      expect(err.attestationStatus).toBe('declined');
+      expect(err.payload.attestation_description).toContain('declined');
+      expect(err.payload.error_description).toContain('Do not retry');
+    }
+  });
+
+  it('never passes a malformed declined block through, and still fails closed', async () => {
+    mockFetch({ active: true, error: 'confirmation_declined', declined: { action_session_id: 'asess_abc', hold_until: 7 } });
+    try {
+      await validateAgentToken('ag_at_x', { scope_used: 'write:payments' });
+      throw new Error('expected refusal');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(VerifyRefusedError);
+      expect(err).not.toBeInstanceOf(ConfirmationDeclinedError);
+      expect(err.code).toBe('confirmation_declined');
+      expect(err.payload.declined).toBeUndefined();
+    }
+  });
+});
+
+describe('parseActionDecline', () => {
+  it('requires the four string fields and nulls the optional ones', () => {
+    expect(parseActionDecline({ action_session_id: 'a', declined_at: 'b', hold_until: 'c', scope: 's' })).toEqual({
+      action_session_id: 'a', declined_at: 'b', hold_until: 'c', scope: 's',
+      method: null, endpoint: null, request_digest: null, summary: null,
+    });
+    expect(parseActionDecline({ action_session_id: 'a', declined_at: 'b', scope: 's' })).toBeNull();
+    expect(parseActionDecline('nope')).toBeNull();
+    expect(parseActionDecline(null)).toBeNull();
   });
 });
 
