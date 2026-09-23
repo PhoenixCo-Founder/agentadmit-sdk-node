@@ -108,3 +108,41 @@ export class ConfirmationRequiredError extends VerifyRefusedError {
     this.attestationStatus = attestationStatus;
   }
 }
+
+/**
+ * The human's explicit no (`confirmation_declined`, 1.12.0): the user
+ * declined exactly this action on the hosted confirmation page, and the
+ * hosted service holds that answer until `hold_until`. No new ceremony is
+ * staged and no notification is sent while the hold runs. Only the user can
+ * lift a decline; after the hold ends, a retry stages a fresh confirmation.
+ */
+export interface ActionDecline {
+  action_session_id: string;
+  declined_at: string;
+  hold_until: string;
+  scope: string;
+  method: string | null;
+  endpoint: string | null;
+  request_digest: string | null;
+  summary: string | null;
+}
+
+/**
+ * A `VerifyRefusedError` whose refusal is `confirmation_declined`: the
+ * user said no to this exact action and the hold is still running. The 403
+ * payload (`payload`) carries the `declined` block for the agent to relay;
+ * `declined` is the same block, typed. Agents should not retry unless the
+ * user asks them to.
+ */
+export class ConfirmationDeclinedError extends VerifyRefusedError {
+  readonly declined: ActionDecline;
+  /** Why a presented attestation was not accepted, when one was presented. */
+  readonly attestationStatus: string | null;
+
+  constructor(payload: Record<string, unknown>, declined: ActionDecline, attestationStatus: string | null) {
+    super('confirmation_declined', payload);
+    this.name = 'ConfirmationDeclinedError';
+    this.declined = declined;
+    this.attestationStatus = attestationStatus;
+  }
+}

@@ -234,6 +234,32 @@ Notes:
   with the typed `confirmation` block when you build your own middleware.
 - Confirmation only applies when the call declares the exercised scope, which
   `requireScope` always does.
+- **The user can decline.** If the user taps Decline on the hosted page, the
+  hosted service answers the agent's retry with `confirmation_declined` and
+  holds that answer until `declined.hold_until`; no new ceremony is staged and
+  the user is not notified again. Your route returns 403 with the `declined`
+  block; `validateAgentToken` throws `ConfirmationDeclinedError` (a
+  `VerifyRefusedError`) with the typed `declined` block. Agents should relay
+  the decline to the user and not retry unless the user asks. Only the user can
+  lift a decline; after the hold ends, a retry stages a fresh confirmation.
+
+```json
+{
+  "error": "confirmation_declined",
+  "error_description": "The user declined this action on the hosted confirmation page. Do not retry it unless the user asks you to; no new confirmation can be staged for this action until 2026-09-22T21:50:42.000Z.",
+  "declined": {
+    "action_session_id": "asess_...",
+    "declined_at": "2026-09-22T21:35:42.000Z",
+    "hold_until": "2026-09-22T21:50:42.000Z",
+    "scope": "write:payments",
+    "method": "POST",
+    "endpoint": "/api/payments",
+    "request_digest": "sha256:...",
+    "summary": "Pay Alex $50"
+  },
+  "renewal": "Only the user can lift a decline. After the hold ends, a retry stages a fresh confirmation for them to approve or decline again."
+}
+```
 
 ## Rate Limiting
 

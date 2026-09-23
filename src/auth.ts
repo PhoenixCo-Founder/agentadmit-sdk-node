@@ -9,7 +9,7 @@ import { getConfig } from './config';
 import { loadPublicKey } from './keys';
 import { StorageBackend } from './storage';
 import { createHash } from 'crypto';
-import { RateLimitError, VerifyRefusedError, ConfirmationRequiredError, type ActionConfirmation } from './errors';
+import { RateLimitError, VerifyRefusedError, ConfirmationRequiredError, ConfirmationDeclinedError, type ActionConfirmation, type ActionDecline } from './errors';
 import type { ConsentVerdict } from './consent';
 
 let _storage: StorageBackend | null = null;
@@ -433,8 +433,46 @@ function activeRefusalPayload(
     if (typeof data.renewal === 'string') payload.renewal = data.renewal;
     return payload;
   }
+  if (error === 'confirmation_declined') {
+    // Confirm-each-time (1.12.0): the user declined exactly this action on
+    // the hosted page and the hold still runs. Relay the decline so the agent
+    // can tell the user instead of nagging with a link; nothing else from the
+    // wire.
+    const declined = parseActionDecline(data.declined);
+    const payload: Record<string, unknown> = {
+      error: 'confirmation_declined',
+      error_description:
+        data.error_description ??
+        'The user declined this action on the hosted confirmation page. Do not retry it unless the user asks you to.',
+    };
+    if (declined) payload.declined = declined;
+    if (typeof data.attestation_status === 'string') payload.attestation_status = data.attestation_status;
+    if (typeof data.attestation_description === 'string') payload.attestation_description = data.attestation_description;
+    if (typeof data.renewal === 'string') payload.renewal = data.renewal;
+    return payload;
+  }
   // Unknown refusal class: fail closed (forward-compatible).
   return { error, error_description: 'Call refused by the authorization service.' };
+}
+
+/** Strictly typed copy of the wire `declined` block, or null. */
+export function parseActionDecline(raw: unknown): ActionDecline | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const d = raw as Record<string, unknown>;
+  if (typeof d.action_session_id !== 'string' || typeof d.declined_at !== 'string' || typeof d.hold_until !== 'string' || typeof d.scope !== 'string') {
+    return null;
+  }
+  const nullableString = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+  return {
+    action_session_id: d.action_session_id,
+    declined_at: d.declined_at,
+    hold_until: d.hold_until,
+    scope: d.scope,
+    method: nullableString(d.method),
+    endpoint: nullableString(d.endpoint),
+    request_digest: nullableString(d.request_digest),
+    summary: nullableString(d.summary),
+  };
 }
 
 /** Strictly typed copy of the wire `confirmation` block, or null. */
@@ -521,6 +559,13 @@ export async function validateAgentToken(
       throw new ConfirmationRequiredError(
         refusal,
         refusal.confirmation as ActionConfirmation,
+        typeof refusal.attestation_status === 'string' ? refusal.attestation_status : null,
+      );
+    }
+    if (refusal.error === 'confirmation_declined' && refusal.declined) {
+      throw new ConfirmationDeclinedError(
+        refusal,
+        refusal.declined as ActionDecline,
         typeof refusal.attestation_status === 'string' ? refusal.attestation_status : null,
       );
     }
