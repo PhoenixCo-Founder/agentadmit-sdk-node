@@ -26,8 +26,9 @@ export {
   requestTelemetry,
   requestDigest,
   parseActionConfirmation,
+  reportOutcome,
 } from './auth';
-export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, PresenceInfo, VerifyTelemetry, ScopeOptions, ActionConfirmationConsumed } from './auth';
+export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, PresenceInfo, VerifyTelemetry, ScopeOptions, ActionConfirmationConsumed, ConsumedReceipt, Outcome, StatusClass, OutcomeReport } from './auth';
 
 export { checkConsent, CALLER_CLASSES } from './consent';
 export type { CallerClass, ConsentVerdict, ConsentSource, CheckConsentOptions } from './consent';

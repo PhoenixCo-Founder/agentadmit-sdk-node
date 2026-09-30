@@ -535,6 +535,24 @@ app.get('/api/flights', requireScope('read:flights'), (req, res) => {
 
 Do not branch authorization on `user_intent` — it is a record for humans reviewing a grant, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs.
 
+## Outcome Reporting
+
+Successful verify responses can include `audit_row_id`. Use it to append what your app reported happened after the guarded handler ran:
+
+```typescript
+import { reportOutcome } from '@agentadmit/sdk';
+
+await reportOutcome(auditRowId, 'executed', '2xx');
+```
+
+`outcome` is `executed`, `failed`, or `unknown`; `status_class` is optional and must be `1xx` through `5xx`. Automatic Express reporting is opt-in:
+
+```typescript
+app.post('/api/payments', requireScope('write:payments', { reportOutcome: true }), handler);
+```
+
+With `reportOutcome: true`, Express reports after the response `finish` event when a successful verify returned `audit_row_id`. HTTP status `<400` maps to `executed`; status `>=400` maps to `failed`. The SDK does not guess `unknown`, does not report on aborted responses, and logs reporting failures without replacing your app response. A hosted `already_consumed` replay diagnostic is exposed as `consumed_receipt`; it is review data, not authorization to run the action again.
+
 ## Security Alerts
 
 Monitor suspicious agent activity. Six alert types:

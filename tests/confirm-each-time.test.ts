@@ -14,11 +14,13 @@ import { join } from 'path';
 import { loadConfig } from '../src/config';
 import {
   validateAgentToken,
+  requireScope,
   requestTelemetry,
   requestDigest,
   parseActionConfirmation,
   parseActionDecline,
   ACTION_ATTESTATION_HEADER,
+  reportOutcome,
 } from '../src/auth';
 import { ConfirmationRequiredError, ConfirmationDeclinedError, VerifyRefusedError } from '../src/errors';
 import { getScopeMetadata } from '../src/config';
@@ -248,6 +250,30 @@ describe('retry telemetry', () => {
     expect(ctx.action_confirmation).toBeUndefined();
   });
 
+  it('surfaces audit_row_id and replay consumed_receipt without treating replay as authorization', async () => {
+    mockFetch({
+      active: true,
+      user_id: 'u1',
+      connection_id: 'c1',
+      scopes: ['write:payments'],
+      audit_row_id: '11111111-1111-4111-8111-111111111111',
+      consumed_receipt: {
+        consumed_at: '2026-09-30T02:54:07.000Z',
+        connection_id: 'conn_123',
+        chain_seq: null,
+        row_hash: null,
+      },
+    });
+    const ctx = await validateAgentToken('ag_at_x', { scope_used: 'write:payments' });
+    expect(ctx.audit_row_id).toBe('11111111-1111-4111-8111-111111111111');
+    expect(ctx.consumed_receipt).toEqual({
+      consumed_at: '2026-09-30T02:54:07.000Z',
+      connection_id: 'conn_123',
+      chain_seq: null,
+      row_hash: null,
+    });
+  });
+
   it('omits attestation, digest, and summary when absent', () => {
     const telemetry = requestTelemetry(fakeReq({ body: undefined }), 'write:payments');
     expect(telemetry).toEqual({ scope_used: 'write:payments', endpoint: '/api/payments', method: 'POST' });
@@ -264,6 +290,68 @@ describe('retry telemetry', () => {
   it('a summary callback that throws never blocks the call', () => {
     const telemetry = requestTelemetry(fakeReq(), 'write:payments', { actionSummary: () => { throw new Error('boom'); } });
     expect(telemetry?.action_summary).toBeUndefined();
+  });
+});
+
+describe('outcome reporting', () => {
+  it('posts an explicit outcome report with exact status class', async () => {
+    const fetchMock = mockFetch({
+      outcome_row_id: '22222222-2222-4222-8222-222222222222',
+      outcome: 'executed',
+      status_class: '2xx',
+      chain_seq: 12,
+      row_hash: 'abc',
+      reported_at: '2026-09-30T03:00:00.000Z',
+    });
+    const out = await reportOutcome('11111111-1111-4111-8111-111111111111', 'executed', '2xx');
+    expect(out.outcome_row_id).toBe('22222222-2222-4222-8222-222222222222');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain('/api/v1/audit/11111111-1111-4111-8111-111111111111/outcome');
+    expect(JSON.parse((init as any).body)).toEqual({ outcome: 'executed', status_class: '2xx' });
+  });
+
+  it('opt-in Express hook reports after finish and ignores aborted close', async () => {
+    const calls: any[] = [];
+    global.fetch = jest.fn().mockImplementation((_url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push(body);
+      if (body.token) {
+        return Promise.resolve(new Response(JSON.stringify({
+          active: true,
+          user_id: 'u1',
+          connection_id: 'c1',
+          scopes: ['write:payments'],
+          audit_row_id: '11111111-1111-4111-8111-111111111111',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        outcome_row_id: '22222222-2222-4222-8222-222222222222',
+        outcome: body.outcome,
+        status_class: body.status_class,
+        chain_seq: 1,
+        row_hash: 'h',
+        reported_at: '2026-09-30T03:00:00.000Z',
+      }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    }) as any;
+    const app = express();
+    app.use(express.json());
+    app.post('/api/payments', requireScope('write:payments', { reportOutcome: true }), (_req, res) => {
+      res.status(201).json({ ok: true });
+    });
+    const server: Server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const res = await realFetch(`http://127.0.0.1:${port}/api/payments`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ag_at_x', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: 50 }),
+      });
+      expect(res.status).toBe(201);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(calls.find((b) => b.outcome)).toEqual({ outcome: 'executed', status_class: '2xx' });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
