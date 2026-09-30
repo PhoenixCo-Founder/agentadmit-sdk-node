@@ -65,12 +65,41 @@ export interface AgentContext {
    * as that confirmation instead of asking the human twice.
    */
   action_confirmation?: ActionConfirmationConsumed;
+  /**
+   * Audit row id for this successful verify call. Use it to report what the
+   * app observed after the handler ran via reportOutcome().
+   */
+  audit_row_id?: string;
+  /**
+   * Replay diagnostic for an already-consumed action attestation. This is
+   * not a fresh authorization and must not be treated as permission to run.
+   */
+  consumed_receipt?: ConsumedReceipt | null;
 }
 
 /** The consumed confirmation reported on an accepted verify response. */
 export interface ActionConfirmationConsumed {
   action_session_id: string;
   consumed: true;
+}
+
+export interface ConsumedReceipt {
+  consumed_at: string;
+  connection_id: string;
+  chain_seq: number | null;
+  row_hash: string | null;
+}
+
+export type Outcome = 'executed' | 'failed' | 'unknown';
+export type StatusClass = '1xx' | '2xx' | '3xx' | '4xx' | '5xx';
+
+export interface OutcomeReport {
+  outcome_row_id: string;
+  outcome: Outcome;
+  status_class: StatusClass | null;
+  chain_seq: number | null;
+  row_hash: string | null;
+  reported_at: string;
 }
 
 /**
@@ -117,6 +146,7 @@ export interface VerifyActive {
   app_id?: string;
   jti?: string;
   exp?: number;
+  audit_row_id?: string;
   /** Consent Ledger verdict (external-agent path). Additive; may be absent. */
   consent?: ConsentVerdict;
   /** Human-presence fact for the connection. Additive; may be absent. */
@@ -301,6 +331,60 @@ export interface VerifyTelemetry {
   action_summary?: string;
 }
 
+function statusClassFor(statusCode: number | undefined): StatusClass | null {
+  if (typeof statusCode !== 'number' || !Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599) {
+    return null;
+  }
+  return `${Math.floor(statusCode / 100)}xx` as StatusClass;
+}
+
+function outcomeForStatus(statusCode: number | undefined): Outcome | null {
+  const klass = statusClassFor(statusCode);
+  if (!klass) return null;
+  return statusCode! < 400 ? 'executed' : 'failed';
+}
+
+export async function reportOutcome(
+  auditRowId: string,
+  outcome: Outcome,
+  statusClass?: StatusClass | null,
+): Promise<OutcomeReport> {
+  if (!auditRowId || typeof auditRowId !== 'string') {
+    throw new Error('auditRowId is required');
+  }
+  if (!['executed', 'failed', 'unknown'].includes(outcome)) {
+    throw new Error('outcome must be executed, failed, or unknown');
+  }
+  if (statusClass !== undefined && statusClass !== null && !['1xx', '2xx', '3xx', '4xx', '5xx'].includes(statusClass)) {
+    throw new Error('statusClass must be 1xx, 2xx, 3xx, 4xx, 5xx, or null');
+  }
+  const config = getConfig();
+  const apiBase = ((config as any).agentadmit_api_url || 'https://api.agentadmit.com').replace(/\/+$/, '');
+  const response = await fetch(`${apiBase}/api/v1/audit/${encodeURIComponent(auditRowId)}/outcome`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${(config as any).api_key || ''}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ outcome, status_class: statusClass ?? null }),
+  });
+  let data: any = {};
+  try {
+    data = await response.json();
+  } catch {}
+  if (!response.ok) {
+    throw new Error(data?.error_description || data?.error || `Outcome report failed with HTTP ${response.status}`);
+  }
+  return {
+    outcome_row_id: String(data.outcome_row_id),
+    outcome: data.outcome as Outcome,
+    status_class: (data.status_class ?? null) as StatusClass | null,
+    chain_seq: typeof data.chain_seq === 'number' ? data.chain_seq : null,
+    row_hash: typeof data.row_hash === 'string' ? data.row_hash : null,
+    reported_at: String(data.reported_at),
+  };
+}
+
 // Hosted BodySchema caps (verify route): endpoint ≤500, method ≤20,
 // action_attestation_id ≤120, request_digest ≤128, action_summary ≤200.
 const ENDPOINT_MAX = 500;
@@ -322,6 +406,12 @@ export interface ScopeOptions {
    * request; it proves what the human was shown.
    */
   actionSummary?: string | ((req: Request) => string | undefined);
+  /**
+   * Opt-in post-handler outcome reporting. When true, the middleware reports
+   * only after Express emits `finish` with a real HTTP status. If the response
+   * closes before finishing, no outcome is guessed.
+   */
+  reportOutcome?: boolean;
 }
 
 /**
@@ -653,6 +743,20 @@ export async function validateAgentToken(
       ? { action_session_id: data.action_confirmation.action_session_id, consumed: true }
       : undefined;
 
+  const consumedReceipt: ConsumedReceipt | null | undefined =
+    data.consumed_receipt && typeof data.consumed_receipt === 'object' &&
+    typeof data.consumed_receipt.consumed_at === 'string' &&
+    typeof data.consumed_receipt.connection_id === 'string'
+      ? {
+          consumed_at: data.consumed_receipt.consumed_at,
+          connection_id: data.consumed_receipt.connection_id,
+          chain_seq: typeof data.consumed_receipt.chain_seq === 'number' ? data.consumed_receipt.chain_seq : null,
+          row_hash: typeof data.consumed_receipt.row_hash === 'string' ? data.consumed_receipt.row_hash : null,
+        }
+      : (data.consumed_receipt === null ? null : undefined);
+
+  const auditRowId = typeof data.audit_row_id === 'string' ? data.audit_row_id : undefined;
+
   return {
     user,
     connection,
@@ -662,7 +766,28 @@ export async function validateAgentToken(
     ...(purpose !== undefined ? { purpose } : {}),
     ...(userIntent !== undefined ? { user_intent: userIntent } : {}),
     ...(actionConfirmation !== undefined ? { action_confirmation: actionConfirmation } : {}),
+    ...(auditRowId !== undefined ? { audit_row_id: auditRowId } : {}),
+    ...(consumedReceipt !== undefined ? { consumed_receipt: consumedReceipt } : {}),
   };
+}
+
+function attachOutcomeReporter(res: Response, auditRowId?: string): void {
+  if (!auditRowId) return;
+  let finished = false;
+  res.once('finish', () => {
+    finished = true;
+    const statusClass = statusClassFor(res.statusCode);
+    const outcome = outcomeForStatus(res.statusCode);
+    if (!statusClass || !outcome) return;
+    reportOutcome(auditRowId, outcome, statusClass).catch(err => {
+      console.error('[AgentAdmit] Outcome report failed:', err);
+    });
+  });
+  res.once('close', () => {
+    if (!finished) {
+      // The app response did not finish, so the SDK does not guess an outcome.
+    }
+  });
 }
 
 /**
@@ -741,6 +866,7 @@ export function requireScope(scope: string, options?: ScopeOptions) {
 
       await logAccess(ctx, scope, req);
       (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
+      if (options?.reportOutcome) attachOutcomeReporter(res, ctx.audit_row_id);
       next();
     } catch (err: any) {
       if (err instanceof VerifyRefusedError) {
@@ -775,6 +901,7 @@ export function requireScopeIfAgent(scope: string, options?: ScopeOptions) {
 
       await logAccess(ctx, scope, req);
       (req as any).agentAdmit = { auth_type: 'agent', ...ctx };
+      if (options?.reportOutcome) attachOutcomeReporter(res, ctx.audit_row_id);
       next();
     } catch (err: any) {
       if (err instanceof VerifyRefusedError) {
