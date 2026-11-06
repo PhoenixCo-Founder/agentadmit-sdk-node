@@ -535,6 +535,28 @@ app.get('/api/flights', requireScope('read:flights'), (req, res) => {
 
 Do not branch authorization on `user_intent` — it is a record for humans reviewing a grant, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs.
 
+## Agent Designation
+
+On AgentAdmit's consent page the user says which agent app a connection is for and, optionally, which AI model family it mainly uses. That is the user's statement, recorded with the grant; it is not a verified identity of the agent. Separately, an agent may report its own platform and model when it redeems the connection token; that is unverified too.
+
+The verify response reports both on every introspection, and they ride into your middleware context as `req.agentAdmit.designated_agent` and `req.agentAdmit.agent_reported` (`undefined` when the connection carries none):
+
+```typescript
+app.get('/api/flights', requireScope('read:flights'), (req, res) => {
+  const ctx = (req as any).agentAdmit;
+  // { agent_id, name, source: 'user_declared', model: { model_id, name } | null }
+  const named = ctx.designated_agent;
+  // { platform, model: { id, version } | null }
+  const reported = ctx.agent_reported;
+  console.log(`Named by the user: ${named?.name ?? '(not named)'}; model: ${named?.model?.name ?? '(not named)'}`);
+  console.log(`Reported by the agent: ${reported?.model?.id ?? '(nothing)'}`);
+});
+```
+
+Use `designated_agent.name` when you tell a user which of their connections did something: it is the name they chose. `agent_id` and `model.model_id` are the ids of your list entries, or `null` when the user typed a name that is not on your list.
+
+Do not branch authorization on either field. They are records for people reviewing a connection, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs. To act on a designation, use the hosted revoke API (`designated_agent_id`, `designated_model_id`) or your list's block setting in the dashboard.
+
 ## Outcome Reporting
 
 Successful verify responses can include `audit_row_id`. Use it to append what your app reported happened after the guarded handler ran:
