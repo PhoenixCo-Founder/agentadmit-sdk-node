@@ -555,6 +555,8 @@ app.get('/api/flights', requireScope('read:flights'), (req, res) => {
 
 Use `designated_agent.name` when you tell a user which of their connections did something: it is the name they chose. `agent_id` and `model.model_id` are the ids of your list entries, or `null` when the user typed a name that is not on your list.
 
+If agents redeem connection tokens through your app's `/token` route, the route passes `agent_platform` and `agent_model` along to the hosted exchange when the agent sends them (since 1.14.1).
+
 Do not branch authorization on either field. They are records for people reviewing a connection, not a gate. Scope checks, connection status, and consent verdicts remain the only decision inputs. To act on a designation, use the hosted revoke API (`designated_agent_id`, `designated_model_id`) or your list's block setting in the dashboard.
 
 ## Outcome Reporting
