@@ -306,7 +306,10 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
   // Token exchange — forwards to hosted service
   agentadmitRouter.post('/token', async (req: Request, res: Response) => {
     try {
-      const { grant_type, connection_token, agent_id, agent_label, agent_metadata } = req.body;
+      const {
+        grant_type, connection_token, agent_id, agent_label, agent_metadata,
+        agent_platform, agent_model,
+      } = req.body;
 
       if (grant_type !== 'connection_token') {
         return res.status(400).json({ error: 'unsupported_grant_type' });
@@ -323,6 +326,11 @@ export function createAgentAdmitRouter(options: RouterOptions): { wellknownRoute
       if (agent_label != null) exchangeBody.agent_label = agent_label;
       if (agent_id != null) exchangeBody.agent_id = agent_id;
       if (agent_metadata != null) exchangeBody.agent_metadata = agent_metadata;
+      // What the agent says it runs on (1.14.1). Reported by the agent,
+      // unverified; the hosted service records it and never lets it decide
+      // the outcome of the exchange.
+      if (agent_platform != null) exchangeBody.agent_platform = agent_platform;
+      if (agent_model != null) exchangeBody.agent_model = agent_model;
 
       const { status, data } = await callHostedService('/api/v1/exchange', exchangeBody,
         { authenticated: false });

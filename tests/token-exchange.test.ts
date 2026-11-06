@@ -137,6 +137,34 @@ describe('POST /token exchange', () => {
     });
   });
 
+  it('forwards what the agent says it runs on (agent_platform, agent_model)', async () => {
+    const res = await exchange({
+      grant_type: 'connection_token',
+      connection_token: 'ag_ct_abc',
+      agent_label: 'My Agent',
+      agent_platform: 'ExampleAgent 2.1',
+      agent_model: { id: 'example-model', version: '2026-01' },
+    });
+    expect(res.status).toBe(200);
+    expect(captured!.body).toEqual({
+      token: 'ag_ct_abc',
+      agent_label: 'My Agent',
+      agent_platform: 'ExampleAgent 2.1',
+      agent_model: { id: 'example-model', version: '2026-01' },
+    });
+  });
+
+  it('omits agent_platform and agent_model when the agent sends null', async () => {
+    const res = await exchange({
+      grant_type: 'connection_token',
+      connection_token: 'ag_ct_abc',
+      agent_platform: null,
+      agent_model: null,
+    });
+    expect(res.status).toBe(200);
+    expect(captured!.body).toEqual({ token: 'ag_ct_abc' });
+  });
+
   it('reports the real package version in the discovery document', async () => {
     const res = await realFetch(`${baseUrl}/.well-known/agentadmit`);
     expect(res.status).toBe(200);
