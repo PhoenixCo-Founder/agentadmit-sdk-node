@@ -75,6 +75,39 @@ export interface AgentContext {
    * not a fresh authorization and must not be treated as permission to run.
    */
   consumed_receipt?: ConsumedReceipt | null;
+  /**
+   * The agent app (and, when the user named one, the AI model family) the
+   * USER said this connection is for on the consent page. Declared by the
+   * user; not a verified identity of the agent. Review-time record only,
+   * never an enforcement input. Absent on connections granted before agent
+   * designation existed and on direct-API (test) grants.
+   */
+  designated_agent?: DesignatedAgent;
+  /**
+   * What the AGENT reported about itself when it redeemed the connection
+   * token (its platform and model). Unverified and optional: absent when the
+   * agent reported neither. Review-time record only, never an enforcement
+   * input. Compare it with `designated_agent` in your own audit views.
+   */
+  agent_reported?: AgentReported;
+}
+
+/**
+ * The agent the user named for a connection (1.14.0). `agent_id` /
+ * `model.model_id` are the app owner's list entry ids, or null when the
+ * user typed a name that is not on the list.
+ */
+export interface DesignatedAgent {
+  agent_id: string | null;
+  name: string;
+  source: 'user_declared';
+  model: { model_id: string | null; name: string } | null;
+}
+
+/** What the agent reported it runs on at exchange (1.14.0). Unverified. */
+export interface AgentReported {
+  platform: string | null;
+  model: { id: string; version: string | null } | null;
 }
 
 /** The consumed confirmation reported on an accepted verify response. */
@@ -168,6 +201,18 @@ export interface VerifyActive {
    * absent on older servers.
    */
   user_intent?: string | null;
+  /**
+   * The agent the USER named for this connection (declared, not verified).
+   * `null` when the connection carries no designation. Additive; absent on
+   * older servers.
+   */
+  designated_agent?: DesignatedAgent | null;
+  /**
+   * What the agent reported about itself at exchange (unverified). `null`
+   * when it reported neither a platform nor a model. Additive; absent on
+   * older servers.
+   */
+  agent_reported?: AgentReported | null;
 }
 
 /** Failed (but non-fatal) introspection result — HTTP 200, active: false. */
@@ -546,6 +591,43 @@ function activeRefusalPayload(
 }
 
 /** Strictly typed copy of the wire `declined` block, or null. */
+/**
+ * Strict reader for the verify response's `designated_agent`. Only a block
+ * with a non-empty string name and source 'user_declared' is accepted;
+ * anything else is treated as absent, never coerced.
+ */
+export function parseDesignatedAgent(raw: unknown): DesignatedAgent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const d = raw as Record<string, unknown>;
+  if (typeof d.name !== 'string' || d.name.length === 0 || d.source !== 'user_declared') return null;
+  const m = d.model && typeof d.model === 'object' ? (d.model as Record<string, unknown>) : null;
+  return {
+    agent_id: typeof d.agent_id === 'string' ? d.agent_id : null,
+    name: d.name,
+    source: 'user_declared',
+    model: m && typeof m.name === 'string' && m.name.length > 0
+      ? { model_id: typeof m.model_id === 'string' ? m.model_id : null, name: m.name }
+      : null,
+  };
+}
+
+/**
+ * Strict reader for the verify response's `agent_reported`. Returns null
+ * when the block carries neither a string platform nor a model with a
+ * string id.
+ */
+export function parseAgentReported(raw: unknown): AgentReported | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const m = r.model && typeof r.model === 'object' ? (r.model as Record<string, unknown>) : null;
+  const platform = typeof r.platform === 'string' && r.platform.length > 0 ? r.platform : null;
+  const model = m && typeof m.id === 'string' && m.id.length > 0
+    ? { id: m.id, version: typeof m.version === 'string' ? m.version : null }
+    : null;
+  if (platform === null && model === null) return null;
+  return { platform, model };
+}
+
 export function parseActionDecline(raw: unknown): ActionDecline | null {
   if (!raw || typeof raw !== 'object') return null;
   const d = raw as Record<string, unknown>;
@@ -757,6 +839,12 @@ export async function validateAgentToken(
 
   const auditRowId = typeof data.audit_row_id === 'string' ? data.audit_row_id : undefined;
 
+  // Agent designation (1.14.0): who the USER said this connection is for,
+  // and what the agent reported about itself. Records for review, never
+  // consulted for any decision in this SDK.
+  const designatedAgent = parseDesignatedAgent(data.designated_agent) ?? undefined;
+  const agentReported = parseAgentReported(data.agent_reported) ?? undefined;
+
   return {
     user,
     connection,
@@ -768,6 +856,8 @@ export async function validateAgentToken(
     ...(actionConfirmation !== undefined ? { action_confirmation: actionConfirmation } : {}),
     ...(auditRowId !== undefined ? { audit_row_id: auditRowId } : {}),
     ...(consumedReceipt !== undefined ? { consumed_receipt: consumedReceipt } : {}),
+    ...(designatedAgent !== undefined ? { designated_agent: designatedAgent } : {}),
+    ...(agentReported !== undefined ? { agent_reported: agentReported } : {}),
   };
 }
 

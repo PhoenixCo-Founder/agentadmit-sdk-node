@@ -26,8 +26,11 @@ export {
   requestTelemetry,
   requestDigest,
   parseActionConfirmation,
+  parseDesignatedAgent,
+  parseAgentReported,
   reportOutcome,
 } from './auth';
+export type { DesignatedAgent, AgentReported } from './auth';
 export type { AgentContext, VerifyErrorCode, VerifyActive, VerifyInactive, PresenceInfo, VerifyTelemetry, ScopeOptions, ActionConfirmationConsumed, ConsumedReceipt, Outcome, StatusClass, OutcomeReport } from './auth';
 
 export { checkConsent, CALLER_CLASSES } from './consent';
