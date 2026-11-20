@@ -82,6 +82,14 @@ export class VerifyRefusedError extends Error {
 export interface ActionConfirmation {
   action_session_id: string;
   action_session_url: string;
+  /**
+   * Whether the user still has to create a passkey before this action can be
+   * confirmed (1.15.0). `true`: no passkey is on file for the app yet, so the
+   * link the agent holds cannot be used alone; send the user to the page
+   * `createOwnerLink()` returns from a route your signed-in user uses.
+   * Absent when the hosted service did not state it (never coerced).
+   */
+  enrollment_required?: boolean;
   expires_at: string;
   scope: string;
   method: string | null;
