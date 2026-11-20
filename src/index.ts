@@ -26,6 +26,7 @@ export {
   requestTelemetry,
   requestDigest,
   parseActionConfirmation,
+  ENROLLMENT_REQUIRED_DESCRIPTION,
   parseDesignatedAgent,
   parseAgentReported,
   reportOutcome,
@@ -56,6 +57,9 @@ export type { AppAttestedPresenceWire } from './appAttestedPresence';
 
 export { RateLimitError, VerifyRefusedError, ConfirmationRequiredError, ConfirmationDeclinedError } from './errors';
 export type { ActionConfirmation, ActionDecline } from './errors';
+
+export { createOwnerLink } from './ownerLink';
+export type { OwnerLink, OwnerLinkError } from './ownerLink';
 
 export {
   configureAlerts,

@@ -558,9 +558,12 @@ function activeRefusalPayload(
     const confirmation = parseActionConfirmation(data.confirmation);
     const payload: Record<string, unknown> = {
       error: 'confirmation_required',
-      error_description:
-        data.error_description ??
-        'This action requires a fresh human confirmation. Give the confirmation link to the user, then retry with the X-AgentAdmit-Action-Attestation header.',
+      // 1.15.0: when the user has no passkey yet, the link alone cannot be
+      // used; the agent is told to send the user into the app instead.
+      error_description: confirmation?.enrollment_required === true
+        ? ENROLLMENT_REQUIRED_DESCRIPTION
+        : data.error_description ??
+          'This action requires a fresh human confirmation. Give the confirmation link to the user, then retry with the X-AgentAdmit-Action-Attestation header.',
     };
     if (confirmation) payload.confirmation = confirmation;
     if (typeof data.attestation_status === 'string') payload.attestation_status = data.attestation_status;
@@ -647,7 +650,18 @@ export function parseActionDecline(raw: unknown): ActionDecline | null {
   };
 }
 
-/** Strictly typed copy of the wire `confirmation` block, or null. */
+/**
+ * What the agent is told when the confirmation needs a passkey the user has
+ * not created yet (1.15.0): the confirmation link alone cannot be used.
+ */
+export const ENROLLMENT_REQUIRED_DESCRIPTION =
+  'This action requires a fresh human confirmation, and this user has no passkey on file for the app yet, so the confirmation link alone cannot be used. Ask the user to open the request from inside the app. After they confirm, retry with the X-AgentAdmit-Action-Attestation header.';
+
+/**
+ * Strictly typed copy of the wire `confirmation` block, or null.
+ * `enrollment_required` (1.15.0) is kept only when the wire value is a
+ * boolean; any other value is treated as if the key were missing.
+ */
 export function parseActionConfirmation(raw: unknown): ActionConfirmation | null {
   if (!raw || typeof raw !== 'object') return null;
   const c = raw as Record<string, unknown>;
@@ -658,6 +672,7 @@ export function parseActionConfirmation(raw: unknown): ActionConfirmation | null
   return {
     action_session_id: c.action_session_id,
     action_session_url: c.action_session_url,
+    ...(typeof c.enrollment_required === 'boolean' ? { enrollment_required: c.enrollment_required } : {}),
     expires_at: c.expires_at,
     scope: c.scope,
     method: nullableString(c.method),
